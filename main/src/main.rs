@@ -2,15 +2,32 @@
 #![no_main]
 
 pub extern crate max7800x_hal as hal;
+use core::ops::Deref;
+
 pub use hal::pac;
 pub use hal::entry;
 
+use hal::uart::BuiltUartPeripheral;
+use libectf::write_to_uart;
 // pick a panicking behavior
 use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
 // use panic_abort as _; // requires nightly
 // use panic_itm as _; // logs messages over ITM; requires ITM support
 // use panic_semihosting as _; // logs messages to the host stderr; requires a debugger
 // use cortex_m_semihosting::heprintln; // uncomment to use this for printing through semihosting
+
+struct UARTWriter<'a, UART: Deref<Target = pac::uart0::RegisterBlock>, RX, TX, CTS, RTS>(&'a BuiltUartPeripheral<UART, RX, TX, CTS, RTS>);
+
+impl<'a, UART, RX, TX, CTS, RTS> Extend<u8> for UARTWriter<'a, UART, RX, TX, CTS, RTS>
+where
+    UART: Deref<Target = pac::uart0::RegisterBlock>
+{
+    fn extend<T: IntoIterator<Item = u8>>(&mut self, iter: T) {
+        for item in iter {
+            self.0.write_byte(item);
+        }
+    }
+}
 
 #[entry]
 fn main() -> ! {
@@ -45,6 +62,8 @@ fn main() -> ! {
         .parity(hal::uart::ParityBit::None)
         .build();
 
+    write_to_uart(&(1,2,"test"), b'A', UARTWriter(&console));
+    
     console.write_bytes(b"Hello, world!\r\n");
 
     // Initialize the GPIO2 peripheral
