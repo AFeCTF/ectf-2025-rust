@@ -1,10 +1,15 @@
 #![no_std]
 #![no_main]
 
+use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
+use embedded_alloc::LlffHeap as Heap;
+use libectf::Opcode;
 use libectf::BINCODE_CONFIG;
 use max7800x_hal as hal;
+use core::mem::MaybeUninit;
 use core::ops::Deref;
+use core::ptr::addr_of_mut;
 
 use embedded_hal_nb::serial::Read;
 use embedded_io::Read as EIORead;
@@ -14,7 +19,7 @@ pub use hal::pac;
 pub use hal::entry;
 
 use hal::uart::BuiltUartPeripheral;
-use libectf::write_to_uart;
+use libectf::write_to_wire;
 // pick a panicking behavior
 use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
 // use panic_abort as _; // requires nightly
@@ -22,9 +27,23 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 // use panic_semihosting as _; // logs messages to the host stderr; requires a debugger
 // use cortex_m_semihosting::heprintln; // uncomment to use this for printing through semihosting
 
-struct UARTWriter<'a, UART: Deref<Target = pac::uart0::RegisterBlock>, RX, TX, CTS, RTS>(&'a BuiltUartPeripheral<UART, RX, TX, CTS, RTS>);
+#[global_allocator]
+static HEAP: Heap = Heap::empty();
 
-impl<'a, UART, RX, TX, CTS, RTS> Writer for UARTWriter<'a, UART, RX, TX, CTS, RTS>
+struct UartRW<'a, UART: Deref<Target = pac::uart0::RegisterBlock>, RX, TX, CTS, RTS>(&'a mut BuiltUartPeripheral<UART, RX, TX, CTS, RTS>);
+
+impl<'a, UART, RX, TX, CTS, RTS> Reader for UartRW<'a, UART, RX, TX, CTS, RTS>
+where
+    UART: Deref<Target = pac::uart0::RegisterBlock>
+{
+    fn read(&mut self, bytes: &mut [u8]) -> Result<(), bincode::error::DecodeError> {
+        // TODO error handling and we want read_exact instead of read right?
+        self.0.read_exact(bytes).unwrap();
+        Ok(())
+    }
+}
+
+impl<'a, UART, RX, TX, CTS, RTS> Writer for UartRW<'a, UART, RX, TX, CTS, RTS>
 where
     UART: Deref<Target = pac::uart0::RegisterBlock>
 {
@@ -36,6 +55,12 @@ where
 
 #[entry]
 fn main() -> ! {
+    {
+        const HEAP_SIZE: usize = 1024;
+        static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+        unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE); }
+    }
+
     let mut rxbuf = [0u8; 1000];
 
     let p = pac::Peripherals::take().unwrap();
@@ -47,7 +72,6 @@ fn main() -> ! {
         .set_divider::<hal::gcr::clocks::Div1>(&mut gcr.reg)
         .freeze();
 
-    // Initialize and split the GPIO0 peripheral into pins
     let gpio0_pins = hal::gpio::Gpio0::new(p.gpio0, &mut gcr.reg).split();
  
     // Configure UART to host computer with 115200 8N1 settings
@@ -66,7 +90,7 @@ fn main() -> ! {
 
     console.write_bytes(b"Writing test packet to the wire:\n");
 
-    write_to_uart(&"Hello, World!", b'A', UARTWriter(&console));
+    write_to_wire(&"Hello, World!", Opcode::DEBUG, &mut UartRW(&mut console));
 
     loop {
         if console.read_ready().unwrap_or(false) {
@@ -85,7 +109,7 @@ fn main() -> ! {
                 console.read_exact(slice).unwrap();
                 // TODO handle if bytes decoded differs from packet length
                 let (p, _bytes_decoded): ((u32, u32), _) = bincode::decode_from_slice(slice, BINCODE_CONFIG).unwrap();
-                // TODO better error handlind with this because we are probably gonna get invalid
+                // TODO better error handling with this because we are probably gonna get invalid
                 // packets
                 console.write_fmt(format_args!("Recieved packet type {} with length {}: {:?}\n", opcode, packet_len, p)).unwrap();
             }
