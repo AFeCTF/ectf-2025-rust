@@ -1,9 +1,15 @@
 #![no_std]
 #![no_main]
 
-pub extern crate max7800x_hal as hal;
+use bincode::enc::write::Writer;
+use libectf::BINCODE_CONFIG;
+use max7800x_hal as hal;
 use core::ops::Deref;
 
+use embedded_hal_nb::serial::Read;
+use embedded_io::Read as EIORead;
+use embedded_io::ReadReady;
+use embedded_io::Write;
 pub use hal::pac;
 pub use hal::entry;
 
@@ -18,22 +24,21 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 
 struct UARTWriter<'a, UART: Deref<Target = pac::uart0::RegisterBlock>, RX, TX, CTS, RTS>(&'a BuiltUartPeripheral<UART, RX, TX, CTS, RTS>);
 
-impl<'a, UART, RX, TX, CTS, RTS> Extend<u8> for UARTWriter<'a, UART, RX, TX, CTS, RTS>
+impl<'a, UART, RX, TX, CTS, RTS> Writer for UARTWriter<'a, UART, RX, TX, CTS, RTS>
 where
     UART: Deref<Target = pac::uart0::RegisterBlock>
 {
-    fn extend<T: IntoIterator<Item = u8>>(&mut self, iter: T) {
-        for item in iter {
-            self.0.write_byte(item);
-        }
+    fn write(&mut self, bytes: &[u8]) -> Result<(), bincode::error::EncodeError> {
+        self.0.write_bytes(bytes);
+        Ok(())
     }
 }
 
 #[entry]
 fn main() -> ! {
-    // heprintln!("Hello from semihosting!");
+    let mut rxbuf = [0u8; 1000];
+
     let p = pac::Peripherals::take().unwrap();
-    let core = pac::CorePeripherals::take().unwrap();
 
     let mut gcr = hal::gcr::Gcr::new(p.gcr, p.lpgcr);
     let ipo = hal::gcr::clocks::Ipo::new(gcr.osc_guards.ipo).enable(&mut gcr.reg);
@@ -42,16 +47,13 @@ fn main() -> ! {
         .set_divider::<hal::gcr::clocks::Div1>(&mut gcr.reg)
         .freeze();
 
-    // Initialize a delay timer using the ARM SYST (SysTick) peripheral
-    let rate = clks.sys_clk.frequency;
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, rate);
-
     // Initialize and split the GPIO0 peripheral into pins
     let gpio0_pins = hal::gpio::Gpio0::new(p.gpio0, &mut gcr.reg).split();
+ 
     // Configure UART to host computer with 115200 8N1 settings
     let rx_pin = gpio0_pins.p0_0.into_af1();
     let tx_pin = gpio0_pins.p0_1.into_af1();
-    let console = hal::uart::UartPeripheral::uart0(
+    let mut console = hal::uart::UartPeripheral::uart0(
         p.uart0,
         &mut gcr.reg,
         rx_pin,
@@ -62,35 +64,35 @@ fn main() -> ! {
         .parity(hal::uart::ParityBit::None)
         .build();
 
-    write_to_uart(&(1,2,"test"), b'A', UARTWriter(&console));
-    
-    console.write_bytes(b"Hello, world!\r\n");
+    console.write_bytes(b"Writing test packet to the wire:\n");
 
-    // Initialize the GPIO2 peripheral
-    let pins = hal::gpio::Gpio2::new(p.gpio2, &mut gcr.reg).split();
-    // Enable output mode for the RGB LED pins
-    let mut led_r = pins.p2_0.into_input_output();
-    let mut led_g = pins.p2_1.into_input_output();
-    let mut led_b = pins.p2_2.into_input_output();
-    // Use VDDIOH as the power source for the RGB LED pins (3.0V)
-    // Note: This HAL API may change in the future
-    led_r.set_power_vddioh();
-    led_g.set_power_vddioh();
-    led_b.set_power_vddioh();
+    write_to_uart(&"Hello, World!", b'A', UARTWriter(&console));
 
-    // LED blink loop
     loop {
-        led_r.set_high();
-        delay.delay_ms(500);
-        led_g.set_high();
-        delay.delay_ms(500);
-        led_b.set_high();
-        delay.delay_ms(500);
-        led_r.set_low();
-        delay.delay_ms(500);
-        led_g.set_low();
-        delay.delay_ms(500);
-        led_b.set_low();
-        delay.delay_ms(500);
+        if console.read_ready().unwrap_or(false) {
+            if read_byte(&mut console) == b'%' {
+                let opcode = read_byte(&mut console);
+                let packet_len = u16::from_le_bytes([
+                    read_byte(&mut console),
+                    read_byte(&mut console),
+                ]);
+                // TODO abort read if packet is too big
+                // TODO possible vuln if the sent packet was incomplete the rxbuf could be leaked,
+                // we might want to zero it out before deserialization. This should be mitigated by
+                // the read_exact function blocking until the entire buffer is filled. This might
+                // not be desired behavior in the future though so we must tread carefully.
+                let slice = &mut rxbuf[0..packet_len as usize];
+                console.read_exact(slice).unwrap();
+                // TODO handle if bytes decoded differs from packet length
+                let (p, _bytes_decoded): ((u32, u32), _) = bincode::decode_from_slice(slice, BINCODE_CONFIG).unwrap();
+                // TODO better error handlind with this because we are probably gonna get invalid
+                // packets
+                console.write_fmt(format_args!("Recieved packet type {} with length {}: {:?}\n", opcode, packet_len, p)).unwrap();
+            }
+        }
     }
+}
+
+fn read_byte<T: Read>(console: &mut T) -> u8 {
+    Read::read(console).unwrap()
 }
