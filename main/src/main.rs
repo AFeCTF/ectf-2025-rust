@@ -92,7 +92,14 @@ fn main() -> ! {
     write_to_wire(&Packet::Debug("Hello, World!".to_string()), &mut UartRW(&mut console));
 
     loop {
-        let p = read_from_wire(&mut UartRW(&mut console)).unwrap();
-        write_to_wire(&Packet::Debug(format!("Recieved packet {:?}\n", p)), &mut UartRW(&mut console));
+        let p = read_from_wire(true, &mut UartRW(&mut console)).unwrap();
+        // write_to_wire(&Packet::Debug(format!("Received packet {:?}\n", p)), &mut UartRW(&mut console));
+
+        match p {
+            Packet::DecodeCommand(frame) => {
+                write_to_wire(&Packet::DecodeResponse(frame.data), &mut UartRW(&mut console));
+            },
+            _ => {}
+        }
     }
 }

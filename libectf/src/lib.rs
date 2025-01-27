@@ -66,7 +66,7 @@ pub enum Packet {
     SubscriptionCommand(SubscriptionData),
     SubscriptionResponse,
     DecodeCommand(FramePacket),
-    DecodeResponse,
+    DecodeResponse([u8; FRAME_SIZE]),
     Ack,
     Debug(String),
     Error(String)
@@ -75,7 +75,7 @@ pub enum Packet {
 impl Packet {
     pub fn encoded_size(&self) -> u16 {
         match self {
-            Packet::ListCommand | Packet::SubscriptionResponse | Packet::DecodeResponse | Packet::Ack => { 0 }
+            Packet::ListCommand | Packet::SubscriptionResponse | Packet::Ack => { 0 }
             Packet::ListResponse(vec) => {
                 let mut size_finder = SizeFinder(0);
                 for entry in vec {
@@ -93,6 +93,11 @@ impl Packet {
                 bincode::encode_into_writer(frame_data, &mut size_finder, BINCODE_CONFIG).unwrap();
                 size_finder.0
             }
+            Packet::DecodeResponse(frame) => {
+                let mut size_finder = SizeFinder(0);
+                bincode::encode_into_writer(frame, &mut size_finder, BINCODE_CONFIG).unwrap();
+                size_finder.0
+            }
             Packet::Debug(s) => { s.len() as u16 }
             Packet::Error(s) => { s.len() as u16 }
         }
@@ -102,7 +107,7 @@ impl Packet {
         match self {
             Packet::ListCommand | Packet::ListResponse(_) => { Opcode::LIST }
             Packet::SubscriptionCommand(_) | Packet::SubscriptionResponse => { Opcode::SUBSCRIBE }
-            Packet::DecodeCommand(_) | Packet::DecodeResponse => { Opcode::DECODE }
+            Packet::DecodeCommand(_) | Packet::DecodeResponse(_) => { Opcode::DECODE }
             Packet::Ack => { Opcode::ACK }
             Packet::Debug(_) => { Opcode::DEBUG }
             Packet::Error(_) => { Opcode::ERROR }
@@ -232,11 +237,17 @@ pub fn write_header<W: Writer>(opcode: Opcode, length: u16, writer: &mut W) {
 }
 
 fn write_body<T: Encode, RW: Reader + Writer>(body: &T, rw: &mut RW) {
-    bincode::encode_into_writer(body, BodyRW {
+    let mut body_rw = BodyRW {
         cursor: 0,
         rw,
         should_ack: true
-    }, BINCODE_CONFIG).unwrap();
+    };
+
+    bincode::encode_into_writer(body, &mut body_rw, BINCODE_CONFIG).unwrap();
+
+    if body_rw.cursor % CHUNK_SIZE != 0 {
+        wait_for_ack(rw);
+    }
 }
 
 fn write_vector_body<T: Encode, RW: Reader + Writer>(body: &Vec<T>, rw: &mut RW) {
@@ -248,6 +259,10 @@ fn write_vector_body<T: Encode, RW: Reader + Writer>(body: &Vec<T>, rw: &mut RW)
 
     for entry in body {
         bincode::encode_into_writer(entry, &mut body_rw, BINCODE_CONFIG).unwrap();
+    }
+
+    if body_rw.cursor % CHUNK_SIZE != 0 {
+        wait_for_ack(rw);
     }
 }
 
@@ -269,6 +284,7 @@ pub fn write_to_wire<RW: Reader + Writer>(msg: &Packet, rw: &mut RW) {
         Packet::ListResponse(vec) => { write_vector_body(vec, rw); }
         Packet::SubscriptionCommand(subscription_data) => { write_body(subscription_data, rw); }
         Packet::DecodeCommand(frame_data) => { write_body(frame_data, rw); }
+        Packet::DecodeResponse(frame) => { write_body(frame, rw); }
         Packet::Error(s) => { write_string_body(s, rw); }
         Packet::Debug(s) => { write_string_body(s, rw); }
         _ => {}
@@ -293,7 +309,7 @@ pub fn read_header<R: Reader>(reader: &mut R) -> MessageHeader {
 }
 
 fn read_vector_body<T: Decode, RW: Reader + Writer>(rw: &mut RW, length: usize) -> Vec<T> {
-    let mut rw = BodyRW {
+    let mut body_rw = BodyRW {
         cursor: 0,
         rw,
         should_ack: true
@@ -301,8 +317,12 @@ fn read_vector_body<T: Decode, RW: Reader + Writer>(rw: &mut RW, length: usize) 
 
     let mut res = Vec::new();
 
-    while rw.cursor < length {
-        res.push(bincode::decode_from_reader(&mut rw, BINCODE_CONFIG).unwrap());
+    while body_rw.cursor < length {
+        res.push(bincode::decode_from_reader(&mut body_rw, BINCODE_CONFIG).unwrap());
+    }
+
+    if body_rw.cursor % CHUNK_SIZE != 0 {
+        write_ack(rw);
     }
     
     res
@@ -319,15 +339,23 @@ fn read_string_body<RW: Reader + Writer>(rw: &mut RW, length: usize) -> String {
 }
 
 fn read_body<T: Decode, RW: Reader + Writer>(rw: &mut RW) -> T {
-    bincode::decode_from_reader(BodyRW {
+    let mut body_rw = BodyRW {
         cursor: 0,
         rw,
         should_ack: true
-    }, BINCODE_CONFIG).unwrap()
+    };
+
+    let res = bincode::decode_from_reader(&mut body_rw, BINCODE_CONFIG).unwrap();
+
+    if body_rw.cursor % CHUNK_SIZE != 0 {
+        write_ack(rw);
+    }
+    
+    res
 }
 
 // TODO error handling better than option?
-pub fn read_from_wire<RW: Reader + Writer>(rw: &mut RW) -> Option<Packet> {
+pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, rw: &mut RW) -> Option<Packet> {
     let header = read_header(rw);
 
     if header.opcode.should_ack() {
@@ -338,14 +366,19 @@ pub fn read_from_wire<RW: Reader + Writer>(rw: &mut RW) -> Option<Packet> {
         match header.opcode {
             Opcode::ACK => { Packet::Ack },
             Opcode::LIST => { Packet::ListCommand },
-            Opcode::DECODE => { Packet::DecodeResponse },
             Opcode::SUBSCRIBE => { Packet::SubscriptionResponse },
             _ => { return None; }
         }
     } else {
         match header.opcode {
             Opcode::LIST => { Packet::ListResponse(read_vector_body(rw, header.length as usize)) }
-            Opcode::DECODE => { Packet::DecodeCommand(read_body(rw)) }
+            Opcode::DECODE => { 
+                if is_decoder {
+                    Packet::DecodeCommand(read_body(rw))
+                } else {
+                    Packet::DecodeResponse(read_body(rw))
+                }
+            }
             Opcode::SUBSCRIBE => { Packet::SubscriptionCommand(read_body(rw)) }
             Opcode::DEBUG => { Packet::Debug(read_string_body(rw, header.length as usize)) }
             Opcode::ERROR => { Packet::Error(read_string_body(rw, header.length as usize)) }
