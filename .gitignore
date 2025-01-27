@@ -27,3 +27,6 @@ main/trajectories/
 **/poetry.lock
 
 .DS_Store
+
+**/*.pyc
+*.egg-info/

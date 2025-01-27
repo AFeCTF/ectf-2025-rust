@@ -1,19 +1,21 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::ToString;
 use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
-use libectf::Opcode;
-use libectf::BINCODE_CONFIG;
+use libectf::read_from_wire;
+use libectf::Packet;
 use max7800x_hal as hal;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
 use core::ptr::addr_of_mut;
 
-use embedded_hal_nb::serial::Read;
 use embedded_io::Read as EIORead;
-use embedded_io::ReadReady;
 use embedded_io::Write;
 pub use hal::pac;
 pub use hal::entry;
@@ -56,12 +58,11 @@ where
 #[entry]
 fn main() -> ! {
     {
-        const HEAP_SIZE: usize = 1024;
+        // I dont want heap overflow!!
+        const HEAP_SIZE: usize = 32768;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE); }
     }
-
-    let mut rxbuf = [0u8; 1000];
 
     let p = pac::Peripherals::take().unwrap();
 
@@ -88,35 +89,10 @@ fn main() -> ! {
         .parity(hal::uart::ParityBit::None)
         .build();
 
-    console.write_bytes(b"Writing test packet to the wire:\n");
-
-    write_to_wire(&"Hello, World!", Opcode::DEBUG, &mut UartRW(&mut console));
+    write_to_wire(&Packet::Debug("Hello, World!".to_string()), &mut UartRW(&mut console));
 
     loop {
-        if console.read_ready().unwrap_or(false) {
-            if read_byte(&mut console) == b'%' {
-                let opcode = read_byte(&mut console);
-                let packet_len = u16::from_le_bytes([
-                    read_byte(&mut console),
-                    read_byte(&mut console),
-                ]);
-                // TODO abort read if packet is too big
-                // TODO possible vuln if the sent packet was incomplete the rxbuf could be leaked,
-                // we might want to zero it out before deserialization. This should be mitigated by
-                // the read_exact function blocking until the entire buffer is filled. This might
-                // not be desired behavior in the future though so we must tread carefully.
-                let slice = &mut rxbuf[0..packet_len as usize];
-                console.read_exact(slice).unwrap();
-                // TODO handle if bytes decoded differs from packet length
-                let (p, _bytes_decoded): ((u32, u32), _) = bincode::decode_from_slice(slice, BINCODE_CONFIG).unwrap();
-                // TODO better error handling with this because we are probably gonna get invalid
-                // packets
-                console.write_fmt(format_args!("Recieved packet type {} with length {}: {:?}\n", opcode, packet_len, p)).unwrap();
-            }
-        }
+        let p = read_from_wire(&mut UartRW(&mut console)).unwrap();
+        write_to_wire(&Packet::Debug(format!("Recieved packet {:?}\n", p)), &mut UartRW(&mut console));
     }
-}
-
-fn read_byte<T: Read>(console: &mut T) -> u8 {
-    Read::read(console).unwrap()
 }
