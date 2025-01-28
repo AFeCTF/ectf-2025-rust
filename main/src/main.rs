@@ -3,25 +3,23 @@
 
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::ToString;
 use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
-use libectf::read_from_wire;
-use libectf::Packet;
+use libectf::packet::Packet;
+use libectf::uart::read_from_wire;
+use libectf::uart::write_to_wire;
 use max7800x_hal as hal;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
 use core::ptr::addr_of_mut;
 
 use embedded_io::Read as EIORead;
-use embedded_io::Write;
 pub use hal::pac;
 pub use hal::entry;
 
 use hal::uart::BuiltUartPeripheral;
-use libectf::write_to_wire;
+
 // pick a panicking behavior
 use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
 // use panic_abort as _; // requires nightly
@@ -89,7 +87,7 @@ fn main() -> ! {
         .parity(hal::uart::ParityBit::None)
         .build();
 
-    write_to_wire(&Packet::Debug("Hello, World!".to_string()), &mut UartRW(&mut console));
+    // write_to_wire(&Packet::Debug("Hello, World!".to_string()), &mut UartRW(&mut console));
 
     loop {
         let p = read_from_wire(true, &mut UartRW(&mut console)).unwrap();
@@ -97,8 +95,11 @@ fn main() -> ! {
 
         match p {
             Packet::DecodeCommand(frame) => {
-                write_to_wire(&Packet::DecodeResponse(frame.data), &mut UartRW(&mut console));
+                write_to_wire(&Packet::DecodeResponse(frame.data[0]), &mut UartRW(&mut console));
             },
+            Packet::SubscriptionCommand(data) => {
+
+            }
             _ => {}
         }
     }
