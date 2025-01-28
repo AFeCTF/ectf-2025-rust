@@ -1,7 +1,7 @@
 use alloc::{string::{String, ToString}, vec::Vec};
 use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, de::read::Reader, enc::write::Writer, Decode, Encode};
 
-use crate::packet::Packet;
+use crate::packet::{Packet, SubscriptionData};
 
 pub const MAGIC: u8 = b'%';
 pub const CHUNK_SIZE: usize = 256;
@@ -42,7 +42,10 @@ impl Packet {
             }
             Packet::SubscriptionCommand(subscription_data) => {
                 let mut size_finder = SizeFinder(0);
-                bincode::encode_into_writer(subscription_data, &mut size_finder, BINCODE_CONFIG).unwrap();
+                bincode::encode_into_writer(&subscription_data.header, &mut size_finder, BINCODE_CONFIG).unwrap();
+                for entry in &subscription_data.keys {
+                    bincode::encode_into_writer(entry, &mut size_finder, BINCODE_CONFIG).unwrap();
+                }
                 size_finder.0
             }
             Packet::DecodeCommand(frame_data) => {
@@ -75,6 +78,12 @@ struct BodyRW<'l, RW: Reader + Writer> {
     cursor: usize,
     rw: &'l mut RW,
     should_ack: bool
+}
+
+impl<'l, RW: Reader + Writer> BodyRW<'l, RW> {
+    fn new(should_ack: bool, rw: &'l mut RW) -> Self {
+        Self { cursor: 0, rw, should_ack }
+    }
 }
 
 impl<'l, RW: Reader + Writer> Writer for BodyRW<'l, RW> {
@@ -192,57 +201,42 @@ pub fn write_header<W: Writer>(opcode: Opcode, length: u16, writer: &mut W) {
     bincode::encode_into_writer(header, writer, BINCODE_CONFIG).unwrap();
 }
 
-fn write_body<T: Encode, RW: Reader + Writer>(body: &T, rw: &mut RW) {
-    let mut body_rw = BodyRW {
-        cursor: 0,
-        rw,
-        should_ack: true
-    };
-
-    bincode::encode_into_writer(body, &mut body_rw, BINCODE_CONFIG).unwrap();
-
-    if body_rw.cursor % CHUNK_SIZE != 0 {
-        wait_for_ack(rw);
-    }
+fn write_body<T: Encode, RW: Reader + Writer>(body: &T, rw: &mut BodyRW<RW>) {
+    bincode::encode_into_writer(body, rw, BINCODE_CONFIG).unwrap();
 }
 
-fn write_vector_body<T: Encode, RW: Reader + Writer>(body: &Vec<T>, rw: &mut RW) {
-    let mut body_rw = BodyRW {
-        cursor: 0,
-        rw,
-        should_ack: true
-    };
-
+fn write_vector_body<T: Encode, RW: Reader + Writer>(body: &Vec<T>, rw: &mut BodyRW<RW>) {
     for entry in body {
-        bincode::encode_into_writer(entry, &mut body_rw, BINCODE_CONFIG).unwrap();
-    }
-
-    if body_rw.cursor % CHUNK_SIZE != 0 {
-        wait_for_ack(rw);
+        bincode::encode_into_writer(entry, &mut *rw, BINCODE_CONFIG).unwrap();
     }
 }
 
-fn write_string_body<RW: Reader + Writer>(body: &String, rw: &mut RW) {
-    BodyRW {
-        cursor: 0,
-        rw,
-        should_ack: false
-    }.write(body.as_bytes()).unwrap();
+fn write_string_body<RW: Reader + Writer>(body: &String, rw: &mut BodyRW<RW>) {
+    rw.write(body.as_bytes()).unwrap();
 }
 
-pub fn write_to_wire<RW: Reader + Writer>(msg: &Packet, rw: &mut RW) {
-    write_header(msg.opcode(), msg.encoded_size(), rw);
+pub fn write_to_wire<RW: Reader + Writer>(msg: &Packet, raw_rw: &mut RW) {
+    write_header(msg.opcode(), msg.encoded_size(), raw_rw);
     if msg.opcode().should_ack() {
-        wait_for_ack(rw);
+        wait_for_ack(raw_rw);
     }
+
+    let mut rw = BodyRW::new(msg.opcode().should_ack(), raw_rw);
 
     match msg {
-        Packet::ListResponse(vec) => { write_vector_body(vec, rw); }
-        Packet::SubscriptionCommand(subscription_data) => { write_body(subscription_data, rw); }
-        Packet::DecodeCommand(frame_data) => { write_body(frame_data, rw); }
-        Packet::Error(s) => { write_string_body(s, rw); }
-        Packet::Debug(s) => { write_string_body(s, rw); }
+        Packet::ListResponse(vec) => { write_vector_body(vec, &mut rw); }
+        Packet::SubscriptionCommand(subscription_data) => { 
+            write_body(&subscription_data.header, &mut rw); 
+            write_vector_body(&subscription_data.keys, &mut rw); 
+        }
+        Packet::DecodeCommand(frame_data) => { write_body(frame_data, &mut rw); }
+        Packet::Error(s) => { write_string_body(s, &mut rw); }
+        Packet::Debug(s) => { write_string_body(s, &mut rw); }
         _ => {}
+    }
+
+    if rw.cursor % CHUNK_SIZE != 0 {
+        wait_for_ack(raw_rw);
     }
 }
 
@@ -263,58 +257,32 @@ pub fn read_header<R: Reader>(reader: &mut R) -> MessageHeader {
     }
 }
 
-fn read_vector_body<T: Decode, RW: Reader + Writer>(rw: &mut RW, length: usize) -> Vec<T> {
-    let mut body_rw = BodyRW {
-        cursor: 0,
-        rw,
-        should_ack: true
-    };
-
+fn read_vector_body<T: Decode, RW: Reader + Writer>(rw: &mut BodyRW<RW>, length: usize) -> Vec<T> {
     let mut res = Vec::new();
 
-    while body_rw.cursor < length {
-        res.push(bincode::decode_from_reader(&mut body_rw, BINCODE_CONFIG).unwrap());
-    }
-
-    if body_rw.cursor % CHUNK_SIZE != 0 {
-        wait_for_ack(rw);
+    while rw.cursor < length {
+        res.push(bincode::decode_from_reader(&mut *rw, BINCODE_CONFIG).unwrap());
     }
     
     res
 }
 
-fn read_string_body<RW: Reader + Writer>(rw: &mut RW, length: usize) -> String {
+fn read_string_body<RW: Reader + Writer>(rw: &mut BodyRW<RW>, length: usize) -> String {
     let mut res: Vec<u8> = Vec::with_capacity(length);
-    BodyRW {
-        cursor: 0,
-        rw,
-        should_ack: false
-    }.read(res.as_mut_slice()).unwrap();
+    rw.read(res.as_mut_slice()).unwrap();
     String::from_utf8_lossy(res.as_slice()).to_string()
 }
 
 fn read_body<T: Decode, RW: Reader + Writer>(rw: &mut RW) -> T {
-    let mut body_rw = BodyRW {
-        cursor: 0,
-        rw,
-        should_ack: true
-    };
-
-    let res = bincode::decode_from_reader(&mut body_rw, BINCODE_CONFIG).unwrap();
-
-    if body_rw.cursor % CHUNK_SIZE != 0 {
-        wait_for_ack(rw);
-    }
-    
-    res
+    bincode::decode_from_reader(rw, BINCODE_CONFIG).unwrap()
 }
 
 // TODO error handling better than option?
-pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, rw: &mut RW) -> Option<Packet> {
-    let header = read_header(rw);
+pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, raw_rw: &mut RW) -> Option<Packet> {
+    let header = read_header(raw_rw);
 
     if header.opcode.should_ack() {
-        write_ack(rw);
+        write_ack(raw_rw);
     }
 
     Some(if header.length == 0 {
@@ -325,19 +293,34 @@ pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, rw: &mut RW) -> Opt
             _ => { return None; }
         }
     } else {
-        match header.opcode {
-            Opcode::LIST => { Packet::ListResponse(read_vector_body(rw, header.length as usize)) }
+        let mut rw = BodyRW::new(header.opcode.should_ack(), raw_rw);
+
+        let res = match header.opcode {
+            Opcode::LIST => { Packet::ListResponse(read_vector_body(&mut rw, header.length as usize)) }
             Opcode::DECODE => { 
                 if is_decoder {
-                    Packet::DecodeCommand(read_body(rw))
+                    Packet::DecodeCommand(read_body(&mut rw))
                 } else {
-                    Packet::DecodeResponse(read_body(rw))
+                    Packet::DecodeResponse(read_body(&mut rw))
                 }
             }
-            Opcode::SUBSCRIBE => { Packet::SubscriptionCommand(read_body(rw)) }
-            Opcode::DEBUG => { Packet::Debug(read_string_body(rw, header.length as usize)) }
-            Opcode::ERROR => { Packet::Error(read_string_body(rw, header.length as usize)) }
+            Opcode::SUBSCRIBE => { 
+                let packet_len = header.length as usize;
+                let header = read_body(&mut rw);
+                let keys_len = packet_len - rw.cursor;
+                let keys = read_vector_body(&mut rw, keys_len);
+
+                Packet::SubscriptionCommand(SubscriptionData { header, keys })
+            }
+            Opcode::DEBUG => { Packet::Debug(read_string_body(&mut rw, header.length as usize)) }
+            Opcode::ERROR => { Packet::Error(read_string_body(&mut rw, header.length as usize)) }
             _ => { return None; }
+        };
+
+        if rw.cursor % CHUNK_SIZE != 0 {
+            write_ack(raw_rw);
         }
+
+        res
     })
 }

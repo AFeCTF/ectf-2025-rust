@@ -3,6 +3,7 @@ import struct
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import os
+from datetime import datetime
 
 # KEY LEVEL IS A BITMASK
 
@@ -64,13 +65,13 @@ timestamp = 12345
 
 encoded = encode(b"test", b"super secret", channel, timestamp, decoder_id)
 
-level = 63
+# Generate a test key to decrypt this encoded frame
+level = 2
 n = timestamp >> level
 key = gen_key(secrets, n, level, channel, decoder_id)
+# decoded = decrypt_with(encoded[level], key)
 
-decoded = decrypt_with(encoded[level], key)
-
-print(f"decoded = {repr(decoded)}")
+# print(f"decoded = {repr(decoded)}")
 
 def characterize_range(a: int, b: int) -> list[tuple[int, int]]:
     print(f"From {bin(a)} to {bin(b)}")
@@ -85,12 +86,16 @@ def characterize_range(a: int, b: int) -> list[tuple[int, int]]:
             block_level += 1
         else:
             block_span = (1 << block_level) - 1
-            print(f"block level {block_level}: {bin(a)} => {bin(a | block_span)}")
-            res.append((block_level, a >> block_level))
+            print(f"block level {block_level} ({bin(a >> block_level)[2:]}{block_level * 'X'}): {a} => {a | block_span}")
+            res.append((a, block_level))
             a |= block_span
             a += 1
             block_level = 0
 
     return res
+
+
+t = int(datetime.utcnow().timestamp() * 1000)
+t2 = t + 1000 * 60 * 60 * 24 * 100
 
 print(characterize_range(0, 10))

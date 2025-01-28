@@ -3,6 +3,9 @@ name = "libectf"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+doctest = false
+
 [dependencies]
 aes = "0.8.4"
 bincode = { version = "2.0.0-rc.3", features = ['serde', 'derive'], default-features = false }
