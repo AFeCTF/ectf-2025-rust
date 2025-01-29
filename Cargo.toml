@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
-members = [ "libectf",
+members = [ 
+  "libectf",
   "main",
+  "ectf25_design_rs"
 ]

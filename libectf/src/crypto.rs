@@ -101,7 +101,9 @@ fn characterize_range(mut a: u64, b: u64) -> Vec<(u64, u8)> {
     res
 }
 
-pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32) -> SubscriptionData {
+pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32, _device_id: u32) -> SubscriptionData {
+    // TODO encrypt with device id somehow
+
     let header = SubscriptionDataHeader {
         channel,
         start_timestamp: start,
@@ -143,8 +145,9 @@ mod tests {
         let start = 1234;
         let end = 5678;
         let channel = 1;
+        let device_id = 1;
 
-        let s = gen_subscription(secrets, start, end, channel);
+        let s = gen_subscription(secrets, start, end, channel, device_id);
 
         let test_frame: Frame = Frame(*b"This is a test frame. It's size is 64 bytes. SUPER SECRET!!!!!!!");
 

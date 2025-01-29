@@ -3,10 +3,15 @@
 
 extern crate alloc;
 
+use alloc::format;
+use alloc::vec::Vec;
 use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
+use libectf::crypto::decode_with_subscription;
+use libectf::packet::ChannelInfo;
 use libectf::packet::Packet;
+use libectf::packet::SubscriptionData;
 use libectf::uart::read_from_wire;
 use libectf::uart::write_to_wire;
 use max7800x_hal as hal;
@@ -57,7 +62,7 @@ where
 fn main() -> ! {
     {
         // I dont want heap overflow!!
-        const HEAP_SIZE: usize = 32768;
+        const HEAP_SIZE: usize = 4096;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE); }
     }
@@ -88,17 +93,37 @@ fn main() -> ! {
         .build();
 
     // write_to_wire(&Packet::Debug("Hello, World!".to_string()), &mut UartRW(&mut console));
+    
+    let mut subscriptions: Vec<SubscriptionData> = Vec::new();
 
     loop {
         let p = read_from_wire(true, &mut UartRW(&mut console)).unwrap();
-        // write_to_wire(&Packet::Debug(format!("Received packet {:?}\n", p)), &mut UartRW(&mut console));
 
         match p {
             Packet::DecodeCommand(frame) => {
-                write_to_wire(&Packet::DecodeResponse(frame.data[0]), &mut UartRW(&mut console));
+                for s in &subscriptions {
+                    if let Some(f) = decode_with_subscription(&frame, s) {
+                        write_to_wire(&Packet::DecodeResponse(f), &mut UartRW(&mut console));
+                    }
+                }
             },
             Packet::SubscriptionCommand(data) => {
+                write_to_wire(&Packet::Debug(format!("Got {:?}", data)), &mut UartRW(&mut console));
+                subscriptions.push(data);
+                write_to_wire(&Packet::SubscriptionResponse, &mut UartRW(&mut console));
+            }
+            Packet::ListCommand => {
+                let mut res = Vec::new();
 
+                for s in &subscriptions {
+                    res.push(ChannelInfo {
+                        channel: s.header.channel,
+                        start: s.header.start_timestamp,
+                        end: s.header.end_timestamp
+                    });
+                }
+
+                write_to_wire(&Packet::ListResponse(res), &mut UartRW(&mut console));
             }
             _ => {}
         }

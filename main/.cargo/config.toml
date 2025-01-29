@@ -28,6 +28,3 @@ rustflags = [
 
 [build]
 target = "thumbv7em-none-eabihf"     # Cortex-M4F and Cortex-M7F (with FPU)
-
-[alias]
-test_native = "test --target=aarch64-apple-darwin"

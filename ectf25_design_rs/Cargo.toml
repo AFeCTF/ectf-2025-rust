@@ -1,0 +1,13 @@
+[package]
+name = "ectf25_design_rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ectf25_design_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.23.3"
+libectf = { path = "../libectf" }
+rand = "0.9.0"

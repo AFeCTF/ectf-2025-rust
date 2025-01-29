@@ -26,6 +26,7 @@ main/src/trajectories.rs
 main/trajectories/
 **/poetry.lock
 
+test/
 .DS_Store
 
 **/*.pyc

@@ -35,6 +35,7 @@ impl Packet {
             Packet::ListCommand | Packet::SubscriptionResponse | Packet::Ack => { 0 }
             Packet::ListResponse(vec) => {
                 let mut size_finder = SizeFinder(0);
+                bincode::encode_into_writer(0u32, &mut size_finder, BINCODE_CONFIG).unwrap();
                 for entry in vec {
                     bincode::encode_into_writer(entry, &mut size_finder, BINCODE_CONFIG).unwrap();
                 }
@@ -93,7 +94,7 @@ impl<'l, RW: Reader + Writer> Writer for BodyRW<'l, RW> {
             return self.rw.write(bytes)
         }
 
-        let first_chunk_size = CHUNK_SIZE - self.cursor;
+        let first_chunk_size = CHUNK_SIZE - (self.cursor % CHUNK_SIZE);
 
         if first_chunk_size >= bytes.len() {
             self.rw.write(bytes)?;
@@ -129,7 +130,7 @@ impl<'l, RW: Reader + Writer> Reader for BodyRW<'l, RW> {
             return self.rw.read(bytes)
         }
 
-        let first_chunk_size = CHUNK_SIZE - self.cursor;
+        let first_chunk_size = CHUNK_SIZE - (self.cursor % CHUNK_SIZE);
 
         if first_chunk_size >= bytes.len() {
             self.rw.read(bytes)?;
@@ -201,6 +202,10 @@ pub fn write_header<W: Writer>(opcode: Opcode, length: u16, writer: &mut W) {
     bincode::encode_into_writer(header, writer, BINCODE_CONFIG).unwrap();
 }
 
+pub fn encode_to_vec<T: Encode>(data: &T) -> Vec<u8> {
+    bincode::encode_to_vec(data, BINCODE_CONFIG).unwrap()
+}
+
 fn write_body<T: Encode, RW: Reader + Writer>(body: &T, rw: &mut BodyRW<RW>) {
     bincode::encode_into_writer(body, rw, BINCODE_CONFIG).unwrap();
 }
@@ -224,7 +229,10 @@ pub fn write_to_wire<RW: Reader + Writer>(msg: &Packet, raw_rw: &mut RW) {
     let mut rw = BodyRW::new(msg.opcode().should_ack(), raw_rw);
 
     match msg {
-        Packet::ListResponse(vec) => { write_vector_body(vec, &mut rw); }
+        Packet::ListResponse(vec) => { 
+            write_body(&(vec.len() as u32), &mut rw);
+            write_vector_body(vec, &mut rw);
+        }
         Packet::SubscriptionCommand(subscription_data) => { 
             write_body(&subscription_data.header, &mut rw); 
             write_vector_body(&subscription_data.keys, &mut rw); 
@@ -232,10 +240,10 @@ pub fn write_to_wire<RW: Reader + Writer>(msg: &Packet, raw_rw: &mut RW) {
         Packet::DecodeCommand(frame_data) => { write_body(frame_data, &mut rw); }
         Packet::Error(s) => { write_string_body(s, &mut rw); }
         Packet::Debug(s) => { write_string_body(s, &mut rw); }
-        _ => {}
+        _ => { return; }
     }
-
-    if rw.cursor % CHUNK_SIZE != 0 {
+    
+    if msg.opcode().should_ack() && rw.cursor % CHUNK_SIZE != 0 {
         wait_for_ack(raw_rw);
     }
 }
@@ -296,7 +304,10 @@ pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, raw_rw: &mut RW) ->
         let mut rw = BodyRW::new(header.opcode.should_ack(), raw_rw);
 
         let res = match header.opcode {
-            Opcode::LIST => { Packet::ListResponse(read_vector_body(&mut rw, header.length as usize)) }
+            Opcode::LIST => { 
+                let _: u32 = read_body(&mut rw);
+                Packet::ListResponse(read_vector_body(&mut rw, header.length as usize)) 
+            }
             Opcode::DECODE => { 
                 if is_decoder {
                     Packet::DecodeCommand(read_body(&mut rw))
@@ -317,7 +328,7 @@ pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, raw_rw: &mut RW) ->
             _ => { return None; }
         };
 
-        if rw.cursor % CHUNK_SIZE != 0 {
+        if header.opcode.should_ack() && rw.cursor % CHUNK_SIZE != 0 {
             write_ack(raw_rw);
         }
 
