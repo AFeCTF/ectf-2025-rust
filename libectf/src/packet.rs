@@ -3,10 +3,10 @@ use core::{fmt::Debug, str};
 use alloc::{string::String, vec::Vec};
 use bincode::{Decode, Encode};
 
-use crate::crypto::{Key, MAX_POSSIBLE_MASK};
+use crate::crypto::{Key, MASKS};
 
 pub const FRAME_SIZE: usize = 64;
-pub const NUM_ENCODED_FRAMES: usize = (MAX_POSSIBLE_MASK + 1) as usize;
+pub const NUM_ENCODED_FRAMES: usize = MASKS.len();
 
 #[derive(Encode, Decode, Clone, PartialEq, Eq)]
 pub struct Frame(pub [u8; FRAME_SIZE]);
@@ -25,9 +25,14 @@ impl Debug for Frame {
 }
 
 #[derive(Debug, Encode, Decode)]
-pub struct EncodedFramePacket {
+pub struct EncodedFramePacketHeader {
     pub channel: u32,
     pub timestamp: u64,
+}
+
+#[derive(Debug, Encode, Decode)]
+pub struct EncodedFramePacket {
+    pub header: EncodedFramePacketHeader,
     pub data: [Frame; NUM_ENCODED_FRAMES]
 }
 
@@ -62,7 +67,7 @@ pub struct SubscriptionDataHeader {
 #[derive(Debug, Encode, Decode)]
 pub struct SubscriptionKey {
     pub start_timestamp: u64,
-    pub mask_width: u8,
+    pub mask_idx: u8,
     pub key: Key
 }
 
@@ -79,3 +84,28 @@ pub enum Packet {
     Error(String)
 }
 
+pub struct DecodedFrame {
+    pub header: EncodedFramePacketHeader,
+    pub frame: Frame
+}
+
+
+impl SubscriptionData {
+    pub fn contains_frame(&self, frame: &EncodedFramePacketHeader) -> bool {
+        return self.header.channel == frame.channel && self.header.start_timestamp <= frame.timestamp && self.header.end_timestamp >= frame.timestamp;
+    }
+
+    pub fn key_for_frame<'l>(&'l self, header: &EncodedFramePacketHeader) -> Option<&'l SubscriptionKey> {
+        if !self.contains_frame(header) {
+            return None;
+        }
+
+        for key in &self.keys {
+            if (key.start_timestamp ^ header.timestamp) >> MASKS[key.mask_idx as usize] == 0 {
+                return Some(key);
+            }
+        }
+
+        None
+    }
+}

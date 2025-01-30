@@ -4,16 +4,19 @@
 extern crate alloc;
 
 use alloc::format;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
 use libectf::crypto::decode_with_subscription;
 use libectf::packet::ChannelInfo;
+use libectf::packet::EncodedFramePacketHeader;
 use libectf::packet::Packet;
 use libectf::packet::SubscriptionData;
 use libectf::uart::read_from_wire;
 use libectf::uart::write_to_wire;
+use libectf::uart::ReadResult;
 use max7800x_hal as hal;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
@@ -62,7 +65,7 @@ where
 fn main() -> ! {
     {
         // I dont want heap overflow!!
-        const HEAP_SIZE: usize = 4096;
+        const HEAP_SIZE: usize = 32768*3;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE); }
     }
@@ -97,22 +100,36 @@ fn main() -> ! {
     let mut subscriptions: Vec<SubscriptionData> = Vec::new();
 
     loop {
-        let p = read_from_wire(true, &mut UartRW(&mut console)).unwrap();
+        let p = read_from_wire(true, Some(|header: &EncodedFramePacketHeader| {
+            for s in &subscriptions {
+                if let Some(k) = s.key_for_frame(header) {
+                    return Some(k);
+                }
+            }
+
+            None
+        }), &mut UartRW(&mut console));
 
         match p {
-            Packet::DecodeCommand(frame) => {
+            ReadResult::Packet(Packet::DecodeCommand(frame)) => {
                 for s in &subscriptions {
                     if let Some(f) = decode_with_subscription(&frame, s) {
                         write_to_wire(&Packet::DecodeResponse(f), &mut UartRW(&mut console));
                     }
                 }
-            },
-            Packet::SubscriptionCommand(data) => {
-                write_to_wire(&Packet::Debug(format!("Got {:?}", data)), &mut UartRW(&mut console));
+            }
+            ReadResult::DecodedFrame(frame) => {
+                write_to_wire(&Packet::DecodeResponse(frame.frame), &mut UartRW(&mut console));
+            }
+            ReadResult::FrameDecodeError => {
+                write_to_wire(&Packet::Error("Frame Decode Error".to_string()), &mut UartRW(&mut console));
+            }
+            ReadResult::Packet(Packet::SubscriptionCommand(data)) => {
+                write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
                 subscriptions.push(data);
                 write_to_wire(&Packet::SubscriptionResponse, &mut UartRW(&mut console));
             }
-            Packet::ListCommand => {
+            ReadResult::Packet(Packet::ListCommand) => {
                 let mut res = Vec::new();
 
                 for s in &subscriptions {
@@ -129,3 +146,4 @@ fn main() -> ! {
         }
     }
 }
+

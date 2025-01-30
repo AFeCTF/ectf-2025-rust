@@ -1,7 +1,7 @@
 use alloc::{string::{String, ToString}, vec::Vec};
 use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, de::read::Reader, enc::write::Writer, Decode, Encode};
 
-use crate::packet::{Packet, SubscriptionData};
+use crate::{crypto::decode_frame_in_place_with_key, packet::{DecodedFrame, EncodedFramePacketHeader, Frame, Packet, SubscriptionData, SubscriptionKey, NUM_ENCODED_FRAMES}};
 
 pub const MAGIC: u8 = b'%';
 pub const CHUNK_SIZE: usize = 256;
@@ -75,7 +75,8 @@ impl Packet {
         }
     }
 }
-struct BodyRW<'l, RW: Reader + Writer> {
+
+pub(crate) struct BodyRW<'l, RW: Reader + Writer> {
     cursor: usize,
     rw: &'l mut RW,
     should_ack: bool
@@ -141,8 +142,8 @@ impl<'l, RW: Reader + Writer> Reader for BodyRW<'l, RW> {
         } else {
             let first_slice = &mut bytes[0..first_chunk_size];
             self.rw.read(first_slice)?;
-            write_ack(self.rw);
             self.cursor += first_slice.len();
+            write_ack(self.rw);
             for chunk in bytes[first_chunk_size..].chunks_mut(256) {
                 if self.cursor % CHUNK_SIZE != 0 {
                     panic!("This should never happen!");
@@ -150,7 +151,7 @@ impl<'l, RW: Reader + Writer> Reader for BodyRW<'l, RW> {
                 self.rw.read(chunk)?;
                 self.cursor += chunk.len();
                 if self.cursor % CHUNK_SIZE == 0 {
-                    wait_for_ack(self.rw);
+                    write_ack(self.rw);
                 }
             }
         }
@@ -238,6 +239,7 @@ pub fn write_to_wire<RW: Reader + Writer>(msg: &Packet, raw_rw: &mut RW) {
             write_vector_body(&subscription_data.keys, &mut rw); 
         }
         Packet::DecodeCommand(frame_data) => { write_body(frame_data, &mut rw); }
+        Packet::DecodeResponse(frame) => { write_body(frame, &mut rw); }
         Packet::Error(s) => { write_string_body(s, &mut rw); }
         Packet::Debug(s) => { write_string_body(s, &mut rw); }
         _ => { return; }
@@ -285,20 +287,27 @@ fn read_body<T: Decode, RW: Reader + Writer>(rw: &mut RW) -> T {
     bincode::decode_from_reader(rw, BINCODE_CONFIG).unwrap()
 }
 
+pub enum ReadResult {
+    Packet(Packet),
+    DecodedFrame(DecodedFrame),
+    FrameDecodeError,
+    None
+}
+
 // TODO error handling better than option?
-pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, raw_rw: &mut RW) -> Option<Packet> {
+pub fn read_from_wire<'l, RW: Reader + Writer, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l SubscriptionKey>>(is_decoder: bool, live_decode: Option<F>, raw_rw: &mut RW) -> ReadResult {
     let header = read_header(raw_rw);
 
     if header.opcode.should_ack() {
         write_ack(raw_rw);
     }
 
-    Some(if header.length == 0 {
+    if header.length == 0 {
         match header.opcode {
-            Opcode::ACK => { Packet::Ack },
-            Opcode::LIST => { Packet::ListCommand },
-            Opcode::SUBSCRIBE => { Packet::SubscriptionResponse },
-            _ => { return None; }
+            Opcode::ACK => { ReadResult::Packet(Packet::Ack) },
+            Opcode::LIST => { ReadResult::Packet(Packet::ListCommand) },
+            Opcode::SUBSCRIBE => { ReadResult::Packet(Packet::SubscriptionResponse) },
+            _ => { ReadResult::None }
         }
     } else {
         let mut rw = BodyRW::new(header.opcode.should_ack(), raw_rw);
@@ -306,26 +315,36 @@ pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, raw_rw: &mut RW) ->
         let res = match header.opcode {
             Opcode::LIST => { 
                 let _: u32 = read_body(&mut rw);
-                Packet::ListResponse(read_vector_body(&mut rw, header.length as usize)) 
+                ReadResult::Packet(Packet::ListResponse(read_vector_body(&mut rw, header.length as usize)))
             }
             Opcode::DECODE => { 
                 if is_decoder {
-                    Packet::DecodeCommand(read_body(&mut rw))
+                    if let Some(get_key) = live_decode {
+                        let header = read_body(&mut rw);
+                        let key = get_key(&header);
+                        let frame = decode_off_wire(&header, key, &mut rw);
+                        if let Some(frame) = frame {
+                            ReadResult::DecodedFrame(DecodedFrame { header, frame })
+                        } else {
+                            ReadResult::FrameDecodeError
+                        }
+                    } else {
+                        ReadResult::Packet(Packet::DecodeCommand(read_body(&mut rw)))
+                    }
                 } else {
-                    Packet::DecodeResponse(read_body(&mut rw))
+                    ReadResult::Packet(Packet::DecodeResponse(read_body(&mut rw)))
                 }
             }
             Opcode::SUBSCRIBE => { 
                 let packet_len = header.length as usize;
                 let header = read_body(&mut rw);
-                let keys_len = packet_len - rw.cursor;
-                let keys = read_vector_body(&mut rw, keys_len);
+                let keys = read_vector_body(&mut rw, packet_len);
 
-                Packet::SubscriptionCommand(SubscriptionData { header, keys })
+                ReadResult::Packet(Packet::SubscriptionCommand(SubscriptionData { header, keys }))
             }
-            Opcode::DEBUG => { Packet::Debug(read_string_body(&mut rw, header.length as usize)) }
-            Opcode::ERROR => { Packet::Error(read_string_body(&mut rw, header.length as usize)) }
-            _ => { return None; }
+            Opcode::DEBUG => { ReadResult::Packet(Packet::Debug(read_string_body(&mut rw, header.length as usize))) }
+            Opcode::ERROR => { ReadResult::Packet(Packet::Error(read_string_body(&mut rw, header.length as usize))) }
+            _ => { return ReadResult::None; }
         };
 
         if header.opcode.should_ack() && rw.cursor % CHUNK_SIZE != 0 {
@@ -333,5 +352,30 @@ pub fn read_from_wire<RW: Reader + Writer>(is_decoder: bool, raw_rw: &mut RW) ->
         }
 
         res
-    })
+    }
+}
+
+
+fn decode_off_wire<RW: Reader + Writer>(_header: &EncodedFramePacketHeader, key: Option<&SubscriptionKey>, rw: &mut BodyRW<RW>) -> Option<Frame> {
+    let mut res: Option<Frame> = None;
+
+    if let Some(key) = key {
+        for idx in 0..NUM_ENCODED_FRAMES {
+            let f: Frame = read_body(&mut *rw);
+            if idx == key.mask_idx as usize {
+                res = Some(f);
+            }
+        }
+        
+        if let Some(f) = res.as_mut() {
+            decode_frame_in_place_with_key(f, key);
+        }
+    } else {
+        // Throw all frames away
+        for _ in 0..NUM_ENCODED_FRAMES {
+            let _: Frame = read_body(&mut *rw);
+        }
+    }
+    
+    res
 }
