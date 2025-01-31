@@ -9,7 +9,9 @@ use alloc::vec::Vec;
 use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
+use libectf::crypto::aes_decrypt_in_place;
 use libectf::crypto::decode_with_subscription;
+use libectf::crypto::Key;
 use libectf::packet::ChannelInfo;
 use libectf::packet::EncodedFramePacketHeader;
 use libectf::packet::Packet;
@@ -70,6 +72,8 @@ fn main() -> ! {
         unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE); }
     }
 
+    let device_key: Key = Key([0; 32]);  // TODO
+
     let p = pac::Peripherals::take().unwrap();
 
     let mut gcr = hal::gcr::Gcr::new(p.gcr, p.lpgcr);
@@ -124,8 +128,13 @@ fn main() -> ! {
             ReadResult::FrameDecodeError => {
                 write_to_wire(&Packet::Error("Frame Decode Error".to_string()), &mut UartRW(&mut console));
             }
-            ReadResult::Packet(Packet::SubscriptionCommand(data)) => {
+            ReadResult::Packet(Packet::SubscriptionCommand(mut data)) => {
                 write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
+
+                for k in &mut data.keys {
+                    aes_decrypt_in_place(&mut k.key.0, &device_key);
+                }
+
                 subscriptions.push(data);
                 write_to_wire(&Packet::SubscriptionResponse, &mut UartRW(&mut console));
             }

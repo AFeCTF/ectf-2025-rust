@@ -27,7 +27,7 @@ impl Debug for Key {
 
 
 // TODO research security of this
-pub fn aes_encrypt_in_place(data: &mut [u8; 64], key: &Key) {
+pub fn aes_encrypt_in_place<const N: usize>(data: &mut [u8; N], key: &Key) {
     let mut cipher = Aes256::new(key.0.as_ref().into());
 
     for chunk in data.chunks_exact_mut(16) {
@@ -35,12 +35,19 @@ pub fn aes_encrypt_in_place(data: &mut [u8; 64], key: &Key) {
     }
 }
 
-pub fn aes_decrypt_in_place(data: &mut [u8; 64], key: &Key) {
+pub fn aes_decrypt_in_place<const N: usize>(data: &mut [u8; N], key: &Key) {
     let mut cipher = Aes256::new(key.0.as_ref().into());
 
     for chunk in data.chunks_exact_mut(16) {
         cipher.decrypt_block_mut(chunk.into());
     }
+}
+
+fn gen_device_key(device_id: u32, secrets: &[u8]) -> Key {
+    let mut hasher: Sha256 = Digest::new();
+    hasher.update(secrets);
+    hasher.update(device_id.to_le_bytes());
+    Key(hasher.finalize().into())
 }
 
 fn gen_key(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
@@ -104,7 +111,7 @@ fn characterize_range(mut a: u64, b: u64) -> Vec<(u64, u8)> {
     res
 }
 
-pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32, _device_id: u32) -> SubscriptionData {
+pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: u32) -> SubscriptionData {
     // TODO encrypt with device id somehow
 
     let header = SubscriptionDataHeader {
@@ -113,10 +120,18 @@ pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32, _dev
         end_timestamp: end
     };
 
-    let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| SubscriptionKey {
-        start_timestamp: t,
-        mask_idx,
-        key: gen_key(t, mask_idx, channel, secrets)
+    let device_key = gen_device_key(device_id, secrets);
+
+    let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
+        let mut key = gen_key(t, mask_idx, channel, secrets);
+
+        aes_encrypt_in_place(&mut key.0, &device_key);
+
+        SubscriptionKey {
+            start_timestamp: t,
+            mask_idx,
+            key 
+        }
     }).collect();
 
     SubscriptionData { header, keys }

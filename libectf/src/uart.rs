@@ -1,7 +1,7 @@
 use alloc::{string::{String, ToString}, vec::Vec};
 use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, de::read::Reader, enc::write::Writer, Decode, Encode};
 
-use crate::{crypto::decode_frame_in_place_with_key, packet::{DecodedFrame, EncodedFramePacketHeader, Frame, Packet, SubscriptionData, SubscriptionKey, NUM_ENCODED_FRAMES}};
+use crate::{crypto::{decode_frame_in_place_with_key, Key}, packet::{DecodedFrame, EncodedFramePacketHeader, Frame, Packet, SubscriptionData, SubscriptionKey, NUM_ENCODED_FRAMES}};
 
 pub const MAGIC: u8 = b'%';
 pub const CHUNK_SIZE: usize = 256;

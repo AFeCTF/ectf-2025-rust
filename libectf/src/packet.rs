@@ -92,20 +92,14 @@ pub struct DecodedFrame {
 
 impl SubscriptionData {
     pub fn contains_frame(&self, frame: &EncodedFramePacketHeader) -> bool {
-        return self.header.channel == frame.channel && self.header.start_timestamp <= frame.timestamp && self.header.end_timestamp >= frame.timestamp;
+        self.header.channel == frame.channel && self.header.start_timestamp <= frame.timestamp && self.header.end_timestamp >= frame.timestamp
     }
 
-    pub fn key_for_frame<'l>(&'l self, header: &EncodedFramePacketHeader) -> Option<&'l SubscriptionKey> {
+    pub fn key_for_frame(&self, header: &EncodedFramePacketHeader) -> Option<&SubscriptionKey> {
         if !self.contains_frame(header) {
             return None;
         }
 
-        for key in &self.keys {
-            if (key.start_timestamp ^ header.timestamp) >> MASKS[key.mask_idx as usize] == 0 {
-                return Some(key);
-            }
-        }
-
-        None
+        self.keys.iter().find(|&key| (key.start_timestamp ^ header.timestamp) >> MASKS[key.mask_idx as usize] == 0)
     }
 }
