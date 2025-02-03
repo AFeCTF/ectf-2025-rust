@@ -54,19 +54,19 @@ pub struct ChannelInfo {
 #[derive(Debug)]
 pub struct SubscriptionData {
     pub header: SubscriptionDataHeader,
-    pub keys: Vec<SubscriptionKey>
+    pub keys: Vec<EncodedSubscriptionKey>
 }
 
 #[derive(Debug, Encode, Decode)]
 pub struct SubscriptionDataHeader {
     pub start_timestamp: u64,
     pub end_timestamp: u64,
-    pub channel: u32
+    pub channel: u32,
+    pub mac_hash: [u8; 32]
 }
 
 #[derive(Debug, Encode, Decode)]
-pub struct SubscriptionKey {
-    pub start_timestamp: u64,
+pub struct EncodedSubscriptionKey {
     pub mask_idx: u8,
     pub key: Key
 }
@@ -95,11 +95,20 @@ impl SubscriptionData {
         self.header.channel == frame.channel && self.header.start_timestamp <= frame.timestamp && self.header.end_timestamp >= frame.timestamp
     }
 
-    pub fn key_for_frame(&self, header: &EncodedFramePacketHeader) -> Option<&SubscriptionKey> {
+    pub fn key_for_frame(&self, header: &EncodedFramePacketHeader) -> Option<&EncodedSubscriptionKey> {
         if !self.contains_frame(header) {
             return None;
         }
 
-        self.keys.iter().find(|&key| (key.start_timestamp ^ header.timestamp) >> MASKS[key.mask_idx as usize] == 0)
+        let mut start_timestamp = self.header.start_timestamp;
+        for key in &self.keys {
+            let mask = MASKS[key.mask_idx as usize];
+            if (start_timestamp ^ header.timestamp) >> mask == 0 {
+                return Some(key);
+            }
+            start_timestamp += 1 << mask;
+        }
+
+        None
     }
 }

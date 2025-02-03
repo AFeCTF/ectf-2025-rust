@@ -1,7 +1,7 @@
 use alloc::{string::{String, ToString}, vec::Vec};
 use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, de::read::Reader, enc::write::Writer, Decode, Encode};
 
-use crate::{crypto::{decode_frame_in_place_with_key, Key}, packet::{DecodedFrame, EncodedFramePacketHeader, Frame, Packet, SubscriptionData, SubscriptionKey, NUM_ENCODED_FRAMES}};
+use crate::{crypto::decode_frame_in_place_with_key, packet::{DecodedFrame, EncodedFramePacketHeader, EncodedSubscriptionKey, Frame, Packet, SubscriptionData, NUM_ENCODED_FRAMES}};
 
 pub const MAGIC: u8 = b'%';
 pub const CHUNK_SIZE: usize = 256;
@@ -295,7 +295,7 @@ pub enum ReadResult {
 }
 
 // TODO error handling better than option?
-pub fn read_from_wire<'l, RW: Reader + Writer, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l SubscriptionKey>>(is_decoder: bool, live_decode: Option<F>, raw_rw: &mut RW) -> ReadResult {
+pub fn read_from_wire<'l, RW: Reader + Writer, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l EncodedSubscriptionKey>>(is_decoder: bool, live_decode: Option<F>, raw_rw: &mut RW) -> ReadResult {
     let header = read_header(raw_rw);
 
     if header.opcode.should_ack() {
@@ -356,7 +356,7 @@ pub fn read_from_wire<'l, RW: Reader + Writer, F: FnOnce(&EncodedFramePacketHead
 }
 
 
-fn decode_off_wire<RW: Reader + Writer>(_header: &EncodedFramePacketHeader, key: Option<&SubscriptionKey>, rw: &mut BodyRW<RW>) -> Option<Frame> {
+fn decode_off_wire<RW: Reader + Writer>(_header: &EncodedFramePacketHeader, key: Option<&EncodedSubscriptionKey>, rw: &mut BodyRW<RW>) -> Option<Frame> {
     let mut res: Option<Frame> = None;
 
     if let Some(key) = key {
@@ -368,7 +368,7 @@ fn decode_off_wire<RW: Reader + Writer>(_header: &EncodedFramePacketHeader, key:
         }
         
         if let Some(f) = res.as_mut() {
-            decode_frame_in_place_with_key(f, key);
+            decode_frame_in_place_with_key(f, &key.key);
         }
     } else {
         // Throw all frames away

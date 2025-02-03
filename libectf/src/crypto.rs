@@ -1,17 +1,17 @@
 use alloc::vec::Vec;
 
-use aes::Aes256;
+use aes::Aes128;
 use bincode::{Decode, Encode};
 use cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit};
 use sha2::{Sha256, Digest};
 use core::{convert::Into, fmt::Debug, mem::MaybeUninit};
 
-use crate::packet::{EncodedFramePacket, EncodedFramePacketHeader, Frame, SubscriptionData, SubscriptionDataHeader, SubscriptionKey, NUM_ENCODED_FRAMES};
+use crate::packet::{EncodedFramePacket, EncodedFramePacketHeader, EncodedSubscriptionKey, Frame, SubscriptionData, SubscriptionDataHeader, NUM_ENCODED_FRAMES};
 
-pub const MASKS: &[u8] = &[0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60];
+pub const MASKS: &[u8] = &[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
 
 #[derive(Encode, Decode)]
-pub struct Key(pub [u8; 32]);
+pub struct Key(pub [u8; 16]);
 
 impl Debug for Key {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -27,16 +27,22 @@ impl Debug for Key {
 
 
 // TODO research security of this
-pub fn aes_encrypt_in_place<const N: usize>(data: &mut [u8; N], key: &Key) {
-    let mut cipher = Aes256::new(key.0.as_ref().into());
+pub fn aes_encrypt<const N: usize>(data: &mut [u8; N], key: &Key) {
+    let mut cipher = Aes128::new(key.0.as_ref().into());
 
     for chunk in data.chunks_exact_mut(16) {
         cipher.encrypt_block_mut(chunk.into());
     }
 }
 
-pub fn aes_decrypt_in_place<const N: usize>(data: &mut [u8; N], key: &Key) {
-    let mut cipher = Aes256::new(key.0.as_ref().into());
+pub fn aes_decrypt_with_cipher<const N: usize>(cipher: &mut Aes128, data: &mut [u8; N]) {
+    for chunk in data.chunks_exact_mut(16) {
+        cipher.decrypt_block_mut(chunk.into());
+    }
+}
+
+pub fn aes_decrypt<const N: usize>(data: &mut [u8; N], key: &Key) {
+    let mut cipher = Aes128::new(key.0.as_ref().into());
 
     for chunk in data.chunks_exact_mut(16) {
         cipher.decrypt_block_mut(chunk.into());
@@ -47,7 +53,9 @@ fn gen_device_key(device_id: u32, secrets: &[u8]) -> Key {
     let mut hasher: Sha256 = Digest::new();
     hasher.update(secrets);
     hasher.update(device_id.to_le_bytes());
-    Key(hasher.finalize().into())
+    let _hash: [u8; 32] = hasher.finalize().into();
+    // Key(hash[..16].try_into().unwrap())
+    Key([0; 16])
 }
 
 fn gen_key(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
@@ -56,7 +64,8 @@ fn gen_key(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> 
     hasher.update(start_timestamp.to_le_bytes());
     hasher.update(mask_idx.to_le_bytes());
     hasher.update(channel.to_le_bytes());
-    Key(hasher.finalize().into())
+    let hash: [u8; 32] = hasher.finalize().into();
+    Key(hash[..16].try_into().unwrap())
 }
 
 pub fn encode(frame: &Frame, timestamp: u64, channel: u32, secrets: &[u8]) -> EncodedFramePacket {
@@ -69,7 +78,7 @@ pub fn encode(frame: &Frame, timestamp: u64, channel: u32, secrets: &[u8]) -> En
 
     for (mask_idx, mask) in MASKS.iter().enumerate() {
         let key = gen_key(timestamp & !((1 << mask) - 1), mask_idx as u8, channel, secrets);
-        aes_encrypt_in_place(&mut data[mask_idx].0, &key);
+        aes_encrypt(&mut data[mask_idx].0, &key);
     }
 
     EncodedFramePacket {
@@ -81,13 +90,13 @@ pub fn encode(frame: &Frame, timestamp: u64, channel: u32, secrets: &[u8]) -> En
     }
 }
 
-pub fn decode_frame_in_place_with_key(frame: &mut Frame, key: &SubscriptionKey) {
-    aes_decrypt_in_place(&mut frame.0, &key.key);
+pub fn decode_frame_in_place_with_key(frame: &mut Frame, key: &Key) {
+    aes_decrypt(&mut frame.0, &key);
 }
 
-pub fn decode_with_key(frame: &EncodedFramePacket, key: &SubscriptionKey) -> Frame {
+pub fn decode_with_key(frame: &EncodedFramePacket, key: &EncodedSubscriptionKey) -> Frame {
     let mut data = frame.data[key.mask_idx as usize].clone();
-    decode_frame_in_place_with_key(&mut data, key);
+    decode_frame_in_place_with_key(&mut data, &key.key);
     data
 }
 
@@ -113,26 +122,29 @@ fn characterize_range(mut a: u64, b: u64) -> Vec<(u64, u8)> {
 
 pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: u32) -> SubscriptionData {
     // TODO encrypt with device id somehow
-
-    let header = SubscriptionDataHeader {
-        channel,
-        start_timestamp: start,
-        end_timestamp: end
-    };
-
     let device_key = gen_device_key(device_id, secrets);
+
+    let mut hasher: Sha256 = Digest::new();
 
     let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
         let mut key = gen_key(t, mask_idx, channel, secrets);
 
-        aes_encrypt_in_place(&mut key.0, &device_key);
+        hasher.update(&key.0);
 
-        SubscriptionKey {
-            start_timestamp: t,
+        aes_encrypt(&mut key.0, &device_key);
+
+        EncodedSubscriptionKey {
             mask_idx,
             key 
         }
     }).collect();
+
+    let header = SubscriptionDataHeader {
+        channel,
+        start_timestamp: start,
+        end_timestamp: end,
+        mac_hash: hasher.finalize().into()
+    };
 
     SubscriptionData { header, keys }
 }

@@ -3,14 +3,14 @@
 
 extern crate alloc;
 
-use alloc::format;
+use aes::cipher::KeyInit;
+use aes::Aes128;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
-use libectf::crypto::aes_decrypt_in_place;
-use libectf::crypto::decode_with_subscription;
+use libectf::crypto::{aes_decrypt_with_cipher, decode_with_subscription};
 use libectf::crypto::Key;
 use libectf::packet::ChannelInfo;
 use libectf::packet::EncodedFramePacketHeader;
@@ -22,7 +22,7 @@ use libectf::uart::ReadResult;
 use max7800x_hal as hal;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
-use core::ptr::addr_of_mut;
+use sha2::{Sha256, Digest};
 
 use embedded_io::Read as EIORead;
 pub use hal::pac;
@@ -69,10 +69,10 @@ fn main() -> ! {
         // I dont want heap overflow!!
         const HEAP_SIZE: usize = 32768*3;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-        unsafe { HEAP.init(addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE); }
+        unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE); }
     }
 
-    let device_key: Key = Key([0; 32]);  // TODO
+    let device_key: Key = Key([0; 16]);  // TODO
 
     let p = pac::Peripherals::take().unwrap();
 
@@ -129,14 +129,24 @@ fn main() -> ! {
                 write_to_wire(&Packet::Error("Frame Decode Error".to_string()), &mut UartRW(&mut console));
             }
             ReadResult::Packet(Packet::SubscriptionCommand(mut data)) => {
-                write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
+                // write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
+
+                let mut hasher: Sha256 = Digest::new();
+
+                let mut cipher = Aes128::new(device_key.0.as_ref().into());
 
                 for k in &mut data.keys {
-                    aes_decrypt_in_place(&mut k.key.0, &device_key);
+                    aes_decrypt_with_cipher(&mut cipher, &mut k.key.0);
+                    hasher.update(k.key.0);
                 }
 
-                subscriptions.push(data);
-                write_to_wire(&Packet::SubscriptionResponse, &mut UartRW(&mut console));
+                if <[u8; 32]>::from(hasher.finalize()) != data.header.mac_hash {
+                    write_to_wire(&Packet::Error("Message Authentication Error".to_string()), &mut UartRW(&mut console));
+                } else {
+                    write_to_wire(&Packet::SubscriptionResponse, &mut UartRW(&mut console));
+                    subscriptions.push(data);
+                }
+
             }
             ReadResult::Packet(Packet::ListCommand) => {
                 let mut res = Vec::new();
