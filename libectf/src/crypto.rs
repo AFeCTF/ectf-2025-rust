@@ -125,11 +125,15 @@ pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32, devi
     let device_key = gen_device_key(device_id, secrets);
 
     let mut hasher: Sha256 = Digest::new();
+    hasher.update(start.to_le_bytes());
+    hasher.update(end.to_le_bytes());
+    hasher.update(channel.to_le_bytes());
 
     let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
         let mut key = gen_key(t, mask_idx, channel, secrets);
 
-        hasher.update(&key.0);
+        hasher.update(mask_idx.to_le_bytes());
+        hasher.update(key.0);
 
         aes_encrypt(&mut key.0, &device_key);
 

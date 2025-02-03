@@ -132,11 +132,15 @@ fn main() -> ! {
                 // write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
 
                 let mut hasher: Sha256 = Digest::new();
+                hasher.update(data.header.start_timestamp.to_le_bytes());
+                hasher.update(data.header.end_timestamp.to_le_bytes());
+                hasher.update(data.header.channel.to_le_bytes());
 
                 let mut cipher = Aes128::new(device_key.0.as_ref().into());
 
                 for k in &mut data.keys {
                     aes_decrypt_with_cipher(&mut cipher, &mut k.key.0);
+                    hasher.update(k.mask_idx.to_le_bytes());
                     hasher.update(k.key.0);
                 }
 
