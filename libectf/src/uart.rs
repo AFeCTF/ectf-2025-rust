@@ -1,5 +1,6 @@
 use alloc::{string::{String, ToString}, vec::Vec};
 use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, de::read::Reader, enc::write::Writer, Decode, Encode};
+use sha2::{Digest, Sha256};
 
 use crate::{crypto::decode_frame_in_place_with_key, packet::{DecodedFrame, EncodedFramePacketHeader, EncodedSubscriptionKey, Frame, Packet, SubscriptionData, NUM_ENCODED_FRAMES}};
 
@@ -324,7 +325,13 @@ pub fn read_from_wire<'l, RW: Reader + Writer, F: FnOnce(&EncodedFramePacketHead
                         let key = get_key(&header);
                         let frame = decode_off_wire(&header, key, &mut rw);
                         if let Some(frame) = frame {
-                            ReadResult::DecodedFrame(DecodedFrame { header, frame })
+                            let mut hasher: Sha256 = Digest::new();
+                            hasher.update(&frame.0);
+                            if <[u8; 32]>::from(hasher.finalize())[..16] == header.mac_hash {
+                                ReadResult::DecodedFrame(DecodedFrame { header, frame })
+                            } else {
+                                ReadResult::FrameDecodeError
+                            }
                         } else {
                             ReadResult::FrameDecodeError
                         }

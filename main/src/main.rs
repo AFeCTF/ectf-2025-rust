@@ -3,14 +3,13 @@
 
 extern crate alloc;
 
-use aes::cipher::KeyInit;
-use aes::Aes128;
+use alloc::format;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use bincode::de::read::Reader;
 use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
-use libectf::crypto::{aes_decrypt_with_cipher, decode_with_subscription};
+use libectf::crypto::{aes_decrypt_with_cipher, decode_with_subscription, init_cipher};
 use libectf::crypto::Key;
 use libectf::packet::ChannelInfo;
 use libectf::packet::EncodedFramePacketHeader;
@@ -72,7 +71,7 @@ fn main() -> ! {
         unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE); }
     }
 
-    let device_key: Key = Key([0; 16]);  // TODO
+    let device_key: Key = Key([0; 8]);  // TODO
 
     let p = pac::Peripherals::take().unwrap();
 
@@ -136,7 +135,7 @@ fn main() -> ! {
                 hasher.update(data.header.end_timestamp.to_le_bytes());
                 hasher.update(data.header.channel.to_le_bytes());
 
-                let mut cipher = Aes128::new(device_key.0.as_ref().into());
+                let mut cipher = init_cipher(&device_key);
 
                 for k in &mut data.keys {
                     aes_decrypt_with_cipher(&mut cipher, &mut k.key.0);

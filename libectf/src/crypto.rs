@@ -2,16 +2,16 @@ use alloc::vec::Vec;
 
 use aes::Aes128;
 use bincode::{Decode, Encode};
-use cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit};
-use sha2::{Sha256, Digest};
+use cipher::{generic_array::GenericArray, BlockDecryptMut, BlockEncryptMut, KeyInit, KeySizeUser};
+use sha2::{Digest, Sha256};
 use core::{convert::Into, fmt::Debug, mem::MaybeUninit};
 
 use crate::packet::{EncodedFramePacket, EncodedFramePacketHeader, EncodedSubscriptionKey, Frame, SubscriptionData, SubscriptionDataHeader, NUM_ENCODED_FRAMES};
 
-pub const MASKS: &[u8] = &[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
+pub const MASKS: &[u8] = &[0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 45, 50, 55, 60];
 
 #[derive(Encode, Decode)]
-pub struct Key(pub [u8; 16]);
+pub struct Key(pub [u8; 8]);
 
 impl Debug for Key {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -25,10 +25,20 @@ impl Debug for Key {
     }
 }
 
+pub fn into_aes_key(key: &Key) -> GenericArray<u8, <Aes128 as KeySizeUser>::KeySize> {
+    let mut data = [0u8; 16];
+    data[..8].copy_from_slice(&key.0);
+    data.into()
+}
+
+#[inline]
+pub fn init_cipher(key: &Key) -> Aes128 {
+    Aes128::new(&into_aes_key(&key))
+}
 
 // TODO research security of this
 pub fn aes_encrypt<const N: usize>(data: &mut [u8; N], key: &Key) {
-    let mut cipher = Aes128::new(key.0.as_ref().into());
+    let mut cipher = init_cipher(key);
 
     for chunk in data.chunks_exact_mut(16) {
         cipher.encrypt_block_mut(chunk.into());
@@ -42,7 +52,7 @@ pub fn aes_decrypt_with_cipher<const N: usize>(cipher: &mut Aes128, data: &mut [
 }
 
 pub fn aes_decrypt<const N: usize>(data: &mut [u8; N], key: &Key) {
-    let mut cipher = Aes128::new(key.0.as_ref().into());
+    let mut cipher = init_cipher(key);
 
     for chunk in data.chunks_exact_mut(16) {
         cipher.decrypt_block_mut(chunk.into());
@@ -54,8 +64,8 @@ fn gen_device_key(device_id: u32, secrets: &[u8]) -> Key {
     hasher.update(secrets);
     hasher.update(device_id.to_le_bytes());
     let _hash: [u8; 32] = hasher.finalize().into();
-    // Key(hash[..16].try_into().unwrap())
-    Key([0; 16])
+    // Key(hash[..8].try_into().unwrap())
+    Key([0; 8])
 }
 
 fn gen_key(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
@@ -65,10 +75,13 @@ fn gen_key(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> 
     hasher.update(mask_idx.to_le_bytes());
     hasher.update(channel.to_le_bytes());
     let hash: [u8; 32] = hasher.finalize().into();
-    Key(hash[..16].try_into().unwrap())
+    Key(hash[..8].try_into().unwrap())
 }
 
 pub fn encode(frame: &Frame, timestamp: u64, channel: u32, secrets: &[u8]) -> EncodedFramePacket {
+    let mut hasher: Sha256 = Digest::new();
+    hasher.update(&frame.0);
+
     // Stupidity because I don't want frame to implement copy
     let mut data: [MaybeUninit<Frame>; NUM_ENCODED_FRAMES] = unsafe { MaybeUninit::uninit().assume_init() };
     for elem in &mut data {
@@ -85,8 +98,9 @@ pub fn encode(frame: &Frame, timestamp: u64, channel: u32, secrets: &[u8]) -> En
         header: EncodedFramePacketHeader {
             channel,
             timestamp,
+            mac_hash: <[u8;32]>::from(hasher.finalize())[..16].try_into().unwrap()
         },
-        data
+        data,
     }
 }
 
@@ -106,15 +120,20 @@ fn characterize_range(mut a: u64, b: u64) -> Vec<(u64, u8)> {
     let mut mask_idx = 0;
 
     while a <= b {
-        let next_block_span = (1 << MASKS[mask_idx + 1]) - 1;
-        if mask_idx < MASKS.len() - 1 && a & next_block_span == 0 && a | next_block_span <= b {
-            mask_idx += 1;
-        } else {
-            let block_span = (1 << MASKS[mask_idx]) - 1;
-            res.push((a, mask_idx as u8));
-            a = (a | block_span) + 1;
-            mask_idx = 0;
+        if mask_idx < MASKS.len() - 1 {
+            let next_block_span = (1 << MASKS[mask_idx + 1]) - 1;
+            if a & next_block_span == 0 && a | next_block_span <= b {
+                mask_idx += 1;
+                continue;
+            } 
         }
+        let block_span = (1 << MASKS[mask_idx]) - 1;
+        res.push((a, mask_idx as u8));
+        a = (a | block_span) + 1;
+        if a == 0 {  // Overflow
+            return res;
+        }
+        mask_idx = 0;
     }
 
     res
@@ -160,6 +179,15 @@ pub fn decode_with_subscription(frame: &EncodedFramePacket, subscription: &Subsc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_characterize() {
+        let r = characterize_range(1, u64::MAX - 1);
+
+        for (t, mask_idx) in r {
+            println!("{:064b} mask width {}", t, MASKS[mask_idx as usize]);
+        }
+    }
 
     #[test]
     fn test_range_build() {

@@ -28,20 +28,13 @@ impl Debug for Frame {
 pub struct EncodedFramePacketHeader {
     pub channel: u32,
     pub timestamp: u64,
+    pub mac_hash: [u8; 16]
 }
 
 #[derive(Debug, Encode, Decode)]
 pub struct EncodedFramePacket {
     pub header: EncodedFramePacketHeader,
-    pub data: [Frame; NUM_ENCODED_FRAMES]
-}
-
-#[derive(Encode, Decode)]
-pub struct SubscriptionUpdatePacket {
-    pub decoder_id: u32,
-    pub start_timestamp: u64,
-    pub end_timestamp: u64,
-    pub channel: u32
+    pub data: [Frame; NUM_ENCODED_FRAMES],
 }
 
 #[derive(Debug, Encode, Decode)]
