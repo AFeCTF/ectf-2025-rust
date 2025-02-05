@@ -98,7 +98,7 @@ pub fn encode(frame: &Frame, timestamp: u64, channel: u32, secrets: &[u8]) -> En
         header: EncodedFramePacketHeader {
             channel,
             timestamp,
-            mac_hash: <[u8;32]>::from(hasher.finalize())[..16].try_into().unwrap()
+            mac_hash: <[u8; 32]>::from(hasher.finalize())[..16].try_into().unwrap()
         },
         data,
     }

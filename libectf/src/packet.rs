@@ -1,9 +1,11 @@
 use core::{fmt::Debug, str};
 
-use alloc::{string::String, vec::Vec};
-use bincode::{Decode, Encode};
+use alloc::vec::Vec;
+use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, Decode, Encode};
 
 use crate::crypto::{Key, MASKS};
+
+pub const BINCODE_CONFIG: Configuration<LittleEndian, Fixint, NoLimit> = bincode::config::legacy();
 
 pub const FRAME_SIZE: usize = 64;
 pub const NUM_ENCODED_FRAMES: usize = MASKS.len();
@@ -64,24 +66,19 @@ pub struct EncodedSubscriptionKey {
     pub key: Key
 }
 
-#[derive(Debug)]
-pub enum Packet {
-    ListCommand,
-    ListResponse(Vec<ChannelInfo>),
-    SubscriptionCommand(SubscriptionData),
-    SubscriptionResponse,
-    DecodeCommand(EncodedFramePacket),
-    DecodeResponse(Frame),
-    Ack,
-    Debug(String),
-    Error(String)
-}
 
 pub struct DecodedFrame {
     pub header: EncodedFramePacketHeader,
     pub frame: Frame
 }
 
+pub trait EncodeToVec: Encode {
+    fn encode_to_vec(&self) -> Vec<u8> {
+        bincode::encode_to_vec(self, BINCODE_CONFIG).unwrap()
+    }
+}
+
+impl<T: Encode> EncodeToVec for T {}
 
 impl SubscriptionData {
     pub fn contains_frame(&self, frame: &EncodedFramePacketHeader) -> bool {

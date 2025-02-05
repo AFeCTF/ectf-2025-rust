@@ -3,31 +3,23 @@
 
 extern crate alloc;
 
-use alloc::format;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use bincode::de::read::Reader;
-use bincode::enc::write::Writer;
 use embedded_alloc::LlffHeap as Heap;
-use libectf::crypto::{aes_decrypt_with_cipher, decode_with_subscription, init_cipher};
+use libectf::crypto::{aes_decrypt_with_cipher, init_cipher};
 use libectf::crypto::Key;
 use libectf::packet::ChannelInfo;
 use libectf::packet::EncodedFramePacketHeader;
-use libectf::packet::Packet;
 use libectf::packet::SubscriptionData;
-use libectf::uart::read_from_wire;
-use libectf::uart::write_to_wire;
-use libectf::uart::ReadResult;
 use max7800x_hal as hal;
+use uart::rw::{RawRW, UartRW};
+use uart::{Packet, ReadResult};
 use core::mem::MaybeUninit;
-use core::ops::Deref;
 use sha2::{Sha256, Digest};
 
-use embedded_io::Read as EIORead;
 pub use hal::pac;
 pub use hal::entry;
 
-use hal::uart::BuiltUartPeripheral;
 
 // pick a panicking behavior
 use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
@@ -36,31 +28,11 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 // use panic_semihosting as _; // logs messages to the host stderr; requires a debugger
 // use cortex_m_semihosting::heprintln; // uncomment to use this for printing through semihosting
 
+mod uart;
+
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
-struct UartRW<'a, UART: Deref<Target = pac::uart0::RegisterBlock>, RX, TX, CTS, RTS>(&'a mut BuiltUartPeripheral<UART, RX, TX, CTS, RTS>);
-
-impl<'a, UART, RX, TX, CTS, RTS> Reader for UartRW<'a, UART, RX, TX, CTS, RTS>
-where
-    UART: Deref<Target = pac::uart0::RegisterBlock>
-{
-    fn read(&mut self, bytes: &mut [u8]) -> Result<(), bincode::error::DecodeError> {
-        // TODO error handling and we want read_exact instead of read right?
-        self.0.read_exact(bytes).unwrap();
-        Ok(())
-    }
-}
-
-impl<'a, UART, RX, TX, CTS, RTS> Writer for UartRW<'a, UART, RX, TX, CTS, RTS>
-where
-    UART: Deref<Target = pac::uart0::RegisterBlock>
-{
-    fn write(&mut self, bytes: &[u8]) -> Result<(), bincode::error::EncodeError> {
-        self.0.write_bytes(bytes);
-        Ok(())
-    }
-}
 
 #[entry]
 fn main() -> ! {
@@ -102,8 +74,10 @@ fn main() -> ! {
     
     let mut subscriptions: Vec<SubscriptionData> = Vec::new();
 
+    let mut rw = UartRW(&mut console);
+
     loop {
-        let p = read_from_wire(true, Some(|header: &EncodedFramePacketHeader| {
+        let p = rw.read_from_wire(true, |header: &EncodedFramePacketHeader| {
             for s in &subscriptions {
                 if let Some(k) = s.key_for_frame(header) {
                     return Some(k);
@@ -111,21 +85,14 @@ fn main() -> ! {
             }
 
             None
-        }), &mut UartRW(&mut console));
+        });
 
         match p {
-            ReadResult::Packet(Packet::DecodeCommand(frame)) => {
-                for s in &subscriptions {
-                    if let Some(f) = decode_with_subscription(&frame, s) {
-                        write_to_wire(&Packet::DecodeResponse(f), &mut UartRW(&mut console));
-                    }
-                }
-            }
             ReadResult::DecodedFrame(frame) => {
-                write_to_wire(&Packet::DecodeResponse(frame.frame), &mut UartRW(&mut console));
+                rw.write_to_wire(&Packet::DecodeResponse(frame.frame));
             }
             ReadResult::FrameDecodeError => {
-                write_to_wire(&Packet::Error("Frame Decode Error".to_string()), &mut UartRW(&mut console));
+                rw.write_to_wire(&Packet::Error("Frame Decode Error".to_string()));
             }
             ReadResult::Packet(Packet::SubscriptionCommand(mut data)) => {
                 // write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
@@ -144,9 +111,9 @@ fn main() -> ! {
                 }
 
                 if <[u8; 32]>::from(hasher.finalize()) != data.header.mac_hash {
-                    write_to_wire(&Packet::Error("Message Authentication Error".to_string()), &mut UartRW(&mut console));
+                    rw.write_to_wire(&Packet::Error("Message Authentication Error".to_string()));
                 } else {
-                    write_to_wire(&Packet::SubscriptionResponse, &mut UartRW(&mut console));
+                    rw.write_to_wire(&Packet::SubscriptionResponse);
                     subscriptions.push(data);
                 }
 
@@ -162,7 +129,7 @@ fn main() -> ! {
                     });
                 }
 
-                write_to_wire(&Packet::ListResponse(res), &mut UartRW(&mut console));
+                rw.write_to_wire(&Packet::ListResponse(res));
             }
             _ => {}
         }
