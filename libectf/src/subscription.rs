@@ -1,44 +1,8 @@
-use core::{fmt::Debug, str};
-
 use alloc::vec::Vec;
-use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, Decode, Encode};
+use bincode::{Decode, Encode};
 use sha2::{Digest, Sha256};
 
-use crate::crypto::{Key, MASKS};
-
-pub const BINCODE_CONFIG: Configuration<LittleEndian, Fixint, NoLimit> = bincode::config::legacy();
-
-pub const FRAME_SIZE: usize = 64;
-pub const NUM_ENCODED_FRAMES: usize = MASKS.len();
-
-#[derive(Encode, Decode, Clone, PartialEq, Eq)]
-pub struct Frame(pub [u8; FRAME_SIZE]);
-
-impl Debug for Frame {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match str::from_utf8(&self.0) {
-            Ok(s) => {
-                write!(f, "Frame(b\"{}\")", s)
-            },
-            Err(_) => {
-                write!(f, "Frame(ENCRYPTED)")
-            },
-        }
-    }
-}
-
-#[derive(Debug, Encode, Decode)]
-pub struct EncodedFramePacketHeader {
-    pub channel: u32,
-    pub timestamp: u64,
-    pub mac_hash: [u8; 16]
-}
-
-#[derive(Debug, Encode, Decode)]
-pub struct EncodedFramePacket {
-    pub header: EncodedFramePacketHeader,
-    pub data: [Frame; NUM_ENCODED_FRAMES],
-}
+use crate::{frame::{EncodedFramePacket, EncodedFramePacketHeader, Frame}, key::Key, masks::{characterize_range, MASKS}};
 
 #[derive(Debug, Encode, Decode)]
 pub struct ChannelInfo {
@@ -67,19 +31,13 @@ pub struct EncodedSubscriptionKey {
     pub key: Key
 }
 
-
-pub struct DecodedFrame {
-    pub header: EncodedFramePacketHeader,
-    pub frame: Frame
-}
-
-pub trait EncodeToVec: Encode {
-    fn encode_to_vec(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, BINCODE_CONFIG).unwrap()
+impl EncodedSubscriptionKey {
+    pub fn decode_frame_packet(&self, frame: &EncodedFramePacket) -> Frame {
+        let mut data = frame.data[self.mask_idx as usize].clone();
+        self.key.cipher().decode_frame(&mut data);
+        data
     }
 }
-
-impl<T: Encode> EncodeToVec for T {}
 
 impl SubscriptionData {
     pub fn contains_frame(&self, frame: &EncodedFramePacketHeader) -> bool {
@@ -119,4 +77,39 @@ impl SubscriptionData {
 
         <[u8; 32]>::from(hasher.finalize()) == self.header.mac_hash
     }
+
+    pub fn generate(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: u32) -> SubscriptionData {
+        let device_key = Key::for_device(device_id, secrets);
+
+        let mut hasher: Sha256 = Digest::new();
+        hasher.update(start.to_le_bytes());
+        hasher.update(end.to_le_bytes());
+        hasher.update(channel.to_le_bytes());
+
+        let mut device_key_cipher = device_key.cipher();
+
+        let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
+            let mut key = Key::for_frame(t, mask_idx, channel, secrets);
+
+            hasher.update(mask_idx.to_le_bytes());
+            hasher.update(key.0);
+
+            device_key_cipher.encrypt(&mut key.0);
+
+            EncodedSubscriptionKey {
+                mask_idx,
+                key 
+            }
+        }).collect();
+
+        let header = SubscriptionDataHeader {
+            channel,
+            start_timestamp: start,
+            end_timestamp: end,
+            mac_hash: hasher.finalize().into()
+        };
+
+        SubscriptionData { header, keys }
+    }
 }
+

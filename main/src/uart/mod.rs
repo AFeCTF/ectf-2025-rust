@@ -1,6 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use bincode::{enc::write::Writer, Decode, Encode};
-use libectf::packet::{ChannelInfo, DecodedFrame, Frame, SubscriptionData, BINCODE_CONFIG};
+use libectf::{frame::Frame, subscription::{ChannelInfo, SubscriptionData}, BINCODE_CONFIG};
+use rw::DecodedFrame;
 
 pub mod rw;
 

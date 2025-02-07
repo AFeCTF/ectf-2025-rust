@@ -5,6 +5,21 @@
 
 extern crate alloc;
 
-pub mod packet;
-pub mod crypto;
+use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, Encode};
+use alloc::vec::Vec;
+
+pub mod masks;
+pub mod key;
+pub mod frame;
+pub mod subscription;
+
+pub const BINCODE_CONFIG: Configuration<LittleEndian, Fixint, NoLimit> = bincode::config::legacy();
+
+pub trait EncodeToVec: Encode {
+    fn encode_to_vec(&self) -> Vec<u8> {
+        bincode::encode_to_vec(self, BINCODE_CONFIG).unwrap()
+    }
+}
+
+impl<T: Encode> EncodeToVec for T {}
 

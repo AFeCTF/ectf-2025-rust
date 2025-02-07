@@ -3,11 +3,17 @@ use core::ops::Deref;
 use alloc::{string::String, vec::Vec};
 use bincode::{de::read::Reader, enc::write::Writer, Decode, Encode};
 use embedded_io::Read;
-use libectf::packet::{DecodedFrame, EncodedFramePacketHeader, EncodedSubscriptionKey, Frame, SubscriptionData, NUM_ENCODED_FRAMES};
+use libectf::{frame::{EncodedFramePacketHeader, Frame, NUM_ENCODED_FRAMES}, subscription::{EncodedSubscriptionKey, SubscriptionData}};
 use max7800x_hal::{pac, uart::BuiltUartPeripheral};
 use sha2::{Digest, Sha256};
 
 use super::{MessageHeader, Opcode, Packet, ReadResult, BINCODE_CONFIG, CHUNK_SIZE, MAGIC};
+
+#[allow(dead_code)]
+pub struct DecodedFrame {
+    pub header: EncodedFramePacketHeader,
+    pub frame: Frame
+}
 
 pub struct UartRW<'a, UART: Deref<Target = pac::uart0::RegisterBlock>, RX, TX, CTS, RTS>(pub &'a mut BuiltUartPeripheral<UART, RX, TX, CTS, RTS>);
 
