@@ -1,4 +1,4 @@
-use libectf::{crypto::encode, packet::{EncodeToVec, Frame}};
+use libectf::packet::{EncodeToVec, Frame, SubscriptionData};
 use pyo3::prelude::*;
 use rand::{rngs::OsRng, TryRngCore};
 
@@ -15,13 +15,14 @@ impl Encoder {
     }
 
     fn encode(&self, channel: u32, frame: Vec<u8>, timestamp: u64) -> Vec<u8> {
-        encode(&Frame(frame.try_into().unwrap()), timestamp, channel, self.secrets.as_slice()).encode_to_vec()
+        let frame = Frame(frame.try_into().unwrap());
+        frame.encode(timestamp, channel, self.secrets.as_slice()).encode_to_vec()
     }
 }
 
 #[pyfunction]
 fn gen_subscription(secrets: Vec<u8>, device_id: u32, start: u64, end: u64, channel: u32) -> Vec<u8> {
-    let data = libectf::crypto::gen_subscription(secrets.as_slice(), start, end, channel, device_id);
+    let data = SubscriptionData::generate(secrets.as_slice(), start, end, channel, device_id);
 
     let mut res = data.header.encode_to_vec();
     
