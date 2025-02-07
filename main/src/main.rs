@@ -10,13 +10,12 @@ use libectf::frame::EncodedFramePacketHeader;
 use libectf::key::Key;
 use libectf::subscription::{ChannelInfo, SubscriptionData};
 use max7800x_hal as hal;
-use uart::rw::{RawRW, UartRW};
-use uart::{Packet, ReadResult};
+use uart::packet::Packet;
+use uart::raw_rw::{RawRW, ReadResult, UartRW};
 use core::mem::MaybeUninit;
 
 pub use hal::pac;
 pub use hal::entry;
-
 
 // pick a panicking behavior
 use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch panics
