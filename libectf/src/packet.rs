@@ -2,6 +2,7 @@ use core::{fmt::Debug, str};
 
 use alloc::vec::Vec;
 use bincode::{config::{Configuration, Fixint, LittleEndian, NoLimit}, Decode, Encode};
+use sha2::{Digest, Sha256};
 
 use crate::crypto::{Key, MASKS};
 
@@ -100,5 +101,22 @@ impl SubscriptionData {
         }
 
         None
+    }
+
+    pub fn decrypt_and_authenticate(&mut self, device_key: &Key) -> bool {
+        let mut hasher: Sha256 = Digest::new();
+        hasher.update(self.header.start_timestamp.to_le_bytes());
+        hasher.update(self.header.end_timestamp.to_le_bytes());
+        hasher.update(self.header.channel.to_le_bytes());
+
+        let mut cipher = device_key.cipher();
+
+        for k in &mut self.keys {
+            cipher.decrypt(&mut k.key.0);
+            hasher.update(k.mask_idx.to_le_bytes());
+            hasher.update(k.key.0);
+        }
+
+        <[u8; 32]>::from(hasher.finalize()) == self.header.mac_hash
     }
 }

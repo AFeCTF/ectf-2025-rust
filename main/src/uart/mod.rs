@@ -32,6 +32,7 @@ pub struct MessageHeader {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum Packet {
     ListCommand,
     ListResponse(Vec<ChannelInfo>),
@@ -41,6 +42,16 @@ pub enum Packet {
     Ack,
     Debug(String),
     Error(String)
+}
+
+struct SizeFinder(u16);
+
+impl Writer for SizeFinder {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), bincode::error::EncodeError> {
+        // TODO error on overflow (both in casting and addassign)
+        self.0 += bytes.len() as u16;
+        Ok(())
+    }
 }
 
 impl Packet {
@@ -82,16 +93,6 @@ impl Packet {
             Packet::Debug(_) => { Opcode::DEBUG }
             Packet::Error(_) => { Opcode::ERROR }
         }
-    }
-}
-
-struct SizeFinder(u16);
-
-impl Writer for SizeFinder {
-    fn write(&mut self, bytes: &[u8]) -> Result<(), bincode::error::EncodeError> {
-        // TODO error on overflow (both in casting and addassign)
-        self.0 += bytes.len() as u16;
-        Ok(())
     }
 }
 

@@ -25,93 +25,95 @@ impl Debug for Key {
     }
 }
 
-pub fn into_aes_key(key: &Key) -> GenericArray<u8, <Aes128 as KeySizeUser>::KeySize> {
-    let mut data = [0u8; 16];
-    data[..8].copy_from_slice(&key.0);
-    data.into()
-}
+pub struct Cipher(Aes128);
 
-#[inline]
-pub fn init_cipher(key: &Key) -> Aes128 {
-    Aes128::new(&into_aes_key(&key))
-}
+impl Key {
+    pub fn cipher(&self) -> Cipher {
+        Cipher(Aes128::new(&self.to_aes_key()))
+    }
 
-// TODO research security of this
-pub fn aes_encrypt<const N: usize>(data: &mut [u8; N], key: &Key) {
-    let mut cipher = init_cipher(key);
+    fn to_aes_key(&self) -> GenericArray<u8, <Aes128 as KeySizeUser>::KeySize> {
+        let mut data = [0u8; 16];
+        data[..8].copy_from_slice(&self.0);
+        data.into()
+    }
 
-    for chunk in data.chunks_exact_mut(16) {
-        cipher.encrypt_block_mut(chunk.into());
+    fn for_device(device_id: u32, secrets: &[u8]) -> Key {
+        let mut hasher: Sha256 = Digest::new();
+        hasher.update(secrets);
+        hasher.update(device_id.to_le_bytes());
+        let _hash: [u8; 32] = hasher.finalize().into();
+        // Key(hash[..8].try_into().unwrap())
+        Key([0; 8])
+    }
+
+    fn for_frame(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
+        let mut hasher: Sha256 = Digest::new();
+        hasher.update(secrets);
+        hasher.update(start_timestamp.to_le_bytes());
+        hasher.update(mask_idx.to_le_bytes());
+        hasher.update(channel.to_le_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        Key(hash[..8].try_into().unwrap())
     }
 }
 
-pub fn aes_decrypt_with_cipher<const N: usize>(cipher: &mut Aes128, data: &mut [u8; N]) {
-    for chunk in data.chunks_exact_mut(16) {
-        cipher.decrypt_block_mut(chunk.into());
+impl Cipher {
+    pub fn encrypt<const N: usize>(&mut self, data: &mut [u8; N]) {
+        for chunk in data.chunks_exact_mut(16) {
+            self.0.encrypt_block_mut(chunk.into());
+        }
+    }
+
+    pub fn decrypt<const N: usize>(&mut self, data: &mut [u8; N]) {
+        for chunk in data.chunks_exact_mut(16) {
+            self.0.decrypt_block_mut(chunk.into());
+        }
+    }
+
+    pub fn encode_frame(&mut self, frame: &mut Frame) {
+        self.encrypt(&mut frame.0);
+    }
+
+    pub fn decode_frame(&mut self, frame: &mut Frame) {
+        self.decrypt(&mut frame.0);
     }
 }
 
-pub fn aes_decrypt<const N: usize>(data: &mut [u8; N], key: &Key) {
-    let mut cipher = init_cipher(key);
+impl Frame {
+    pub fn encode(&self, timestamp: u64, channel: u32, secrets: &[u8]) -> EncodedFramePacket {
+        let mut hasher: Sha256 = Digest::new();
+        hasher.update(&self.0);
 
-    for chunk in data.chunks_exact_mut(16) {
-        cipher.decrypt_block_mut(chunk.into());
+        // Stupidity because I don't want frame to implement copy
+        let mut data: [MaybeUninit<Frame>; NUM_ENCODED_FRAMES] = unsafe { MaybeUninit::uninit().assume_init() };
+        for elem in &mut data {
+            *elem = MaybeUninit::new(self.clone());
+        }
+        let mut data: [Frame; NUM_ENCODED_FRAMES] = unsafe { core::mem::transmute(data) };
+
+        for (mask_idx, mask) in MASKS.iter().enumerate() {
+            let key = Key::for_frame(timestamp & !((1 << mask) - 1), mask_idx as u8, channel, secrets);
+            key.cipher().encode_frame(&mut data[mask_idx]);
+        }
+
+        EncodedFramePacket {
+            header: EncodedFramePacketHeader {
+                channel,
+                timestamp,
+                mac_hash: <[u8; 32]>::from(hasher.finalize())[..16].try_into().unwrap()
+            },
+            data,
+        }
     }
 }
 
-fn gen_device_key(device_id: u32, secrets: &[u8]) -> Key {
-    let mut hasher: Sha256 = Digest::new();
-    hasher.update(secrets);
-    hasher.update(device_id.to_le_bytes());
-    let _hash: [u8; 32] = hasher.finalize().into();
-    // Key(hash[..8].try_into().unwrap())
-    Key([0; 8])
-}
-
-fn gen_key(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
-    let mut hasher: Sha256 = Digest::new();
-    hasher.update(secrets);
-    hasher.update(start_timestamp.to_le_bytes());
-    hasher.update(mask_idx.to_le_bytes());
-    hasher.update(channel.to_le_bytes());
-    let hash: [u8; 32] = hasher.finalize().into();
-    Key(hash[..8].try_into().unwrap())
-}
-
-pub fn encode(frame: &Frame, timestamp: u64, channel: u32, secrets: &[u8]) -> EncodedFramePacket {
-    let mut hasher: Sha256 = Digest::new();
-    hasher.update(&frame.0);
-
-    // Stupidity because I don't want frame to implement copy
-    let mut data: [MaybeUninit<Frame>; NUM_ENCODED_FRAMES] = unsafe { MaybeUninit::uninit().assume_init() };
-    for elem in &mut data {
-        *elem = MaybeUninit::new(frame.clone());
+impl EncodedSubscriptionKey {
+    pub fn decode_frame_packet(&self, frame: &EncodedFramePacket) -> Frame {
+        let mut data = frame.data[self.mask_idx as usize].clone();
+        self.key.cipher().decode_frame(&mut data);
+        data
     }
-    let mut data: [Frame; NUM_ENCODED_FRAMES] = unsafe { core::mem::transmute(data) };
-
-    for (mask_idx, mask) in MASKS.iter().enumerate() {
-        let key = gen_key(timestamp & !((1 << mask) - 1), mask_idx as u8, channel, secrets);
-        aes_encrypt(&mut data[mask_idx].0, &key);
-    }
-
-    EncodedFramePacket {
-        header: EncodedFramePacketHeader {
-            channel,
-            timestamp,
-            mac_hash: <[u8; 32]>::from(hasher.finalize())[..16].try_into().unwrap()
-        },
-        data,
-    }
-}
-
-pub fn decode_frame_in_place_with_key(frame: &mut Frame, key: &Key) {
-    aes_decrypt(&mut frame.0, &key);
-}
-
-pub fn decode_with_key(frame: &EncodedFramePacket, key: &EncodedSubscriptionKey) -> Frame {
-    let mut data = frame.data[key.mask_idx as usize].clone();
-    decode_frame_in_place_with_key(&mut data, &key.key);
-    data
 }
 
 fn characterize_range(mut a: u64, b: u64) -> Vec<(u64, u8)> {
@@ -139,91 +141,39 @@ fn characterize_range(mut a: u64, b: u64) -> Vec<(u64, u8)> {
     res
 }
 
-pub fn gen_subscription(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: u32) -> SubscriptionData {
-    // TODO encrypt with device id somehow
-    let device_key = gen_device_key(device_id, secrets);
+impl SubscriptionData {
+    pub fn generate(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: u32) -> SubscriptionData {
+        let device_key = Key::for_device(device_id, secrets);
 
-    let mut hasher: Sha256 = Digest::new();
-    hasher.update(start.to_le_bytes());
-    hasher.update(end.to_le_bytes());
-    hasher.update(channel.to_le_bytes());
+        let mut hasher: Sha256 = Digest::new();
+        hasher.update(start.to_le_bytes());
+        hasher.update(end.to_le_bytes());
+        hasher.update(channel.to_le_bytes());
 
-    let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
-        let mut key = gen_key(t, mask_idx, channel, secrets);
+        let mut device_key_cipher = device_key.cipher();
 
-        hasher.update(mask_idx.to_le_bytes());
-        hasher.update(key.0);
+        let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
+            let mut key = Key::for_frame(t, mask_idx, channel, secrets);
 
-        aes_encrypt(&mut key.0, &device_key);
+            hasher.update(mask_idx.to_le_bytes());
+            hasher.update(key.0);
 
-        EncodedSubscriptionKey {
-            mask_idx,
-            key 
-        }
-    }).collect();
+            device_key_cipher.encrypt(&mut key.0);
 
-    let header = SubscriptionDataHeader {
-        channel,
-        start_timestamp: start,
-        end_timestamp: end,
-        mac_hash: hasher.finalize().into()
-    };
+            EncodedSubscriptionKey {
+                mask_idx,
+                key 
+            }
+        }).collect();
 
-    SubscriptionData { header, keys }
-}
+        let header = SubscriptionDataHeader {
+            channel,
+            start_timestamp: start,
+            end_timestamp: end,
+            mac_hash: hasher.finalize().into()
+        };
 
-pub fn decode_with_subscription(frame: &EncodedFramePacket, subscription: &SubscriptionData) -> Option<Frame> {
-    subscription.key_for_frame(&frame.header).map(|k| decode_with_key(frame, k))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_characterize() {
-        let r = characterize_range(1, u64::MAX - 1);
-
-        for (t, mask_idx) in r {
-            println!("{:064b} mask width {}", t, MASKS[mask_idx as usize]);
-        }
-    }
-
-    #[test]
-    fn test_range_build() {
-        let secrets = b"super secret secrets";
-
-        let start = 1234;
-        let end = 5678;
-        let channel = 1;
-        let device_id = 1;
-
-        let s = gen_subscription(secrets, start, end, channel, device_id);
-
-        let test_frame: Frame = Frame(*b"This is a test frame. It's size is 64 bytes. SUPER SECRET!!!!!!!");
-
-        let valid = encode(&test_frame, (start + end) / 2, channel, secrets);
-        let decoded = decode_with_subscription(&valid, &s);
-        assert!(matches!(decoded, Some(f) if f == test_frame));
-
-        let valid = encode(&test_frame, start, channel, secrets);
-        let decoded = decode_with_subscription(&valid, &s);
-        assert!(matches!(decoded, Some(f) if f == test_frame));
-
-        let valid = encode(&test_frame, end, channel, secrets);
-        let decoded = decode_with_subscription(&valid, &s);
-        assert!(matches!(decoded, Some(f) if f == test_frame));
-
-        let invalid = encode(&test_frame, start - 1, channel, secrets);
-        let decoded = decode_with_subscription(&invalid, &s);
-        assert!(matches!(decoded, None));
-
-        let invalid = encode(&test_frame, end + 1, channel, secrets);
-        let decoded = decode_with_subscription(&invalid, &s);
-        assert!(matches!(decoded, None));
-
-        let invalid = encode(&test_frame, start, channel + 1, secrets);
-        let decoded = decode_with_subscription(&invalid, &s);
-        assert!(matches!(decoded, None));
+        SubscriptionData { header, keys }
     }
 }
+

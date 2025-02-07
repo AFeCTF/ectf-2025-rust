@@ -1,9 +1,9 @@
 use core::ops::Deref;
 
-use alloc::{string::{String, ToString}, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use bincode::{de::read::Reader, enc::write::Writer, Decode, Encode};
 use embedded_io::Read;
-use libectf::{crypto::decode_frame_in_place_with_key, packet::{DecodedFrame, EncodedFramePacketHeader, EncodedSubscriptionKey, Frame, SubscriptionData, NUM_ENCODED_FRAMES}};
+use libectf::packet::{DecodedFrame, EncodedFramePacketHeader, EncodedSubscriptionKey, Frame, SubscriptionData, NUM_ENCODED_FRAMES};
 use max7800x_hal::{pac, uart::BuiltUartPeripheral};
 use sha2::{Digest, Sha256};
 
@@ -109,13 +109,10 @@ pub trait RawRW: Reader + Writer + Sized {
             _ => { return; }
         }
         
-        if msg.opcode().should_ack() && rw.cursor % CHUNK_SIZE != 0 {
-            self.wait_for_ack();
-        }
+        rw.finish_write();
     }
 
-    // TODO error handling better than option?
-    fn read_from_wire<'l, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l EncodedSubscriptionKey>>(&mut self, is_decoder: bool, get_key: F) -> ReadResult {
+    fn read_from_wire<'l, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l EncodedSubscriptionKey>>(&mut self, get_key: F) -> ReadResult {
         let header = self.read_header();
 
         if header.opcode.should_ack() {
@@ -138,23 +135,19 @@ pub trait RawRW: Reader + Writer + Sized {
                     ReadResult::Packet(Packet::ListResponse(rw.read_vector_body(header.length as usize)))
                 }
                 Opcode::DECODE => { 
-                    if is_decoder {
-                        let header = rw.read_body();
-                        let key = get_key(&header);
-                        let frame = rw.decode_off_wire(&header, key);
-                        if let Some(frame) = frame {
-                            let mut hasher: Sha256 = Digest::new();
-                            hasher.update(&frame.0);
-                            if <[u8; 32]>::from(hasher.finalize())[..16] == header.mac_hash {
-                                ReadResult::DecodedFrame(DecodedFrame { header, frame })
-                            } else {
-                                ReadResult::FrameDecodeError
-                            }
+                    let header = rw.read_body();
+                    let key = get_key(&header);
+                    let frame = rw.decode_off_wire(&header, key);
+                    if let Some(frame) = frame {
+                        let mut hasher: Sha256 = Digest::new();
+                        hasher.update(&frame.0);
+                        if <[u8; 32]>::from(hasher.finalize())[..16] == header.mac_hash {
+                            ReadResult::DecodedFrame(DecodedFrame { header, frame })
                         } else {
                             ReadResult::FrameDecodeError
                         }
                     } else {
-                        ReadResult::Packet(Packet::DecodeResponse(rw.read_body()))
+                        ReadResult::FrameDecodeError
                     }
                 }
                 Opcode::SUBSCRIBE => { 
@@ -164,14 +157,10 @@ pub trait RawRW: Reader + Writer + Sized {
 
                     ReadResult::Packet(Packet::SubscriptionCommand(SubscriptionData { header, keys }))
                 }
-                Opcode::DEBUG => { ReadResult::Packet(Packet::Debug(rw.read_string_body(header.length as usize))) }
-                Opcode::ERROR => { ReadResult::Packet(Packet::Error(rw.read_string_body(header.length as usize))) }
                 _ => { return ReadResult::None; }
             };
 
-            if header.opcode.should_ack() && rw.cursor % CHUNK_SIZE != 0 {
-                self.write_ack();
-            }
+            rw.finish_read();
 
             res
         }
@@ -179,7 +168,7 @@ pub trait RawRW: Reader + Writer + Sized {
 }
 
 pub struct BodyRW<'l, RW: RawRW> {
-    pub cursor: usize,
+    cursor: usize,
     rw: &'l mut RW,
     should_ack: bool
 }
@@ -213,11 +202,11 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         res
     }
 
-    pub fn read_string_body(&mut self, length: usize) -> String {
-        let mut res: Vec<u8> = Vec::with_capacity(length);
-        self.read(res.as_mut_slice()).unwrap();
-        String::from_utf8_lossy(res.as_slice()).to_string()
-    }
+    // pub fn read_string_body(&mut self, length: usize) -> String {
+    //     let mut res: Vec<u8> = Vec::with_capacity(length);
+    //     self.read(res.as_mut_slice()).unwrap();
+    //     String::from_utf8_lossy(res.as_slice()).to_string()
+    // }
 
     pub fn read_body<T: Decode>(&mut self) -> T {
         bincode::decode_from_reader(self, BINCODE_CONFIG).unwrap()
@@ -235,7 +224,7 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
             }
             
             if let Some(f) = res.as_mut() {
-                decode_frame_in_place_with_key(f, &key.key);
+                key.key.cipher().decode_frame(f);
             }
         } else {
             // Throw all frames away
@@ -245,6 +234,18 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         }
         
         res
+    }
+    
+    fn finish_read(&mut self) {
+        if self.should_ack && self.cursor % CHUNK_SIZE != 0 {
+            self.rw.write_ack();
+        }
+    }
+
+    fn finish_write(&mut self) {
+        if self.should_ack && self.cursor % CHUNK_SIZE != 0 {
+            self.rw.wait_for_ack();
+        }
     }
 }
 
