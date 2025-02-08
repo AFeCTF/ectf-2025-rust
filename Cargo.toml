@@ -2,6 +2,6 @@
 resolver = "2"
 members = [ 
   "libectf",
-  "main",
+  "decoder",
   "ectf25_design_rs"
 ]
