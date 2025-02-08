@@ -1,7 +1,11 @@
 use alloc::vec::Vec;
 
+/// Mask widths that are used to encode packets and generate subscription keys. More mask widths
+/// means encoded packets are larger and subscriptions are smaller, and less mask widths means vice
+/// versa.
 pub const MASKS: &[u8] = &[0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 45, 50, 55, 60];
 
+/// Turn a range of timestamps into a list of bitranges `(start_timestamp, mask_idx)`
 pub(crate) fn characterize_range(mut a: u64, b: u64) -> Vec<(u64, u8)> {
     let mut res = Vec::new();
 

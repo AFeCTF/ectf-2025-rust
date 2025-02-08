@@ -2,8 +2,10 @@ use alloc::{string::String, vec::Vec};
 use bincode::{enc::write::Writer, Decode, Encode};
 use libectf::{frame::Frame, subscription::{ChannelInfo, SubscriptionData}, BINCODE_CONFIG};
 
+/// The magic character indicating the start of a packet
 pub const MAGIC: u8 = b'%';
 
+/// The opcode indicating the type of packet being sent
 #[derive(Encode, Decode, PartialEq, Eq)]
 pub struct Opcode(u8);
 
@@ -15,6 +17,7 @@ impl Opcode {
     pub(super) const ERROR: Opcode = Opcode(b'E');
     pub(super) const DEBUG: Opcode = Opcode(b'G');
 
+    /// Do we need to send/recieve ACKs for this opcode?
     pub(super) fn should_ack(&self) -> bool {
         !matches!(self.0, b'G' | b'A')
     }
@@ -28,18 +31,25 @@ pub struct MessageHeader {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
+/// Every type of packet that can be sent/recieved (omitting the Decode command since this 
+/// struct is never constructed and is instead recieved one frame at a time)
 pub enum Packet {
     ListCommand,
     ListResponse(Vec<ChannelInfo>),
+
     SubscriptionCommand(SubscriptionData),
     SubscriptionResponse,
+
     DecodeResponse(Frame),
+
     Ack,
+
+    #[allow(dead_code)]
     Debug(String),
     Error(String)
 }
 
+/// A dummy writer that stores the amount of bytes written.
 struct SizeFinder(u16);
 
 impl Writer for SizeFinder {
@@ -51,6 +61,7 @@ impl Writer for SizeFinder {
 }
 
 impl Packet {
+    /// Finds the encoded size of a packet.
     pub(super) fn encoded_size(&self) -> u16 {
         match self {
             Packet::ListCommand | Packet::SubscriptionResponse | Packet::Ack => { 0 }
@@ -80,6 +91,7 @@ impl Packet {
         }
     }
 
+    /// Gets the opcode of a packet.
     pub(super) fn opcode(&self) -> Opcode {
         match self {
             Packet::ListCommand | Packet::ListResponse(_) => { Opcode::LIST }

@@ -72,7 +72,7 @@ fn main() -> ! {
 
     loop {
         // Read a packet from the wire. This function also handles frame decoding
-        let p = rw.read_from_wire(|header: &EncodedFramePacketHeader| {
+        let p = rw.read_packet(|header: &EncodedFramePacketHeader| {
             for s in &subscriptions {
                 if let Some(k) = s.key_for_frame(header) {
                     return Some(k);
@@ -84,19 +84,19 @@ fn main() -> ! {
 
         match p {
             ReadResult::DecodedFrame(frame) => {
-                rw.write_to_wire(&Packet::DecodeResponse(frame.frame));
+                rw.write_packet(&Packet::DecodeResponse(frame.frame));
             }
             ReadResult::FrameDecodeError => {
-                rw.write_to_wire(&Packet::Error("Frame Decode Error".to_string()));
+                rw.write_packet(&Packet::Error("Frame Decode Error".to_string()));
             }
             ReadResult::Packet(Packet::SubscriptionCommand(mut data)) => {
                 // write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
 
                 if data.decrypt_and_authenticate(&device_key) {
-                    rw.write_to_wire(&Packet::SubscriptionResponse);
+                    rw.write_packet(&Packet::SubscriptionResponse);
                     subscriptions.push(data);
                 } else {
-                    rw.write_to_wire(&Packet::Error("Message Authentication Error".to_string()));
+                    rw.write_packet(&Packet::Error("Message Authentication Error".to_string()));
                 }
 
             }
@@ -111,7 +111,7 @@ fn main() -> ! {
                     });
                 }
 
-                rw.write_to_wire(&Packet::ListResponse(res));
+                rw.write_packet(&Packet::ListResponse(res));
             }
             _ => {}
         }

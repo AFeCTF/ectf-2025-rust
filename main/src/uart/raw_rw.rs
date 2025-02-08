@@ -8,19 +8,24 @@ use sha2::{Digest, Sha256};
 
 use super::{body_rw::BodyRW, packet::{MessageHeader, Opcode, Packet, MAGIC}};
 
-#[allow(dead_code)]
+/// A decoded frame, along with the header of the encoded frame it came from.
 pub struct DecodedFrame {
+    #[allow(dead_code)]  // TODO do we need this or is just a waste of memory?
     pub header: EncodedFramePacketHeader,
     pub frame: Frame
 }
 
+/// The result of [`RawRW::read_packet`], which can either be a packet, a decoded frame, a frame
+/// decode error, or an unexpected packet.
 pub enum ReadResult {
     Packet(Packet),
     DecodedFrame(DecodedFrame),
     FrameDecodeError,
-    None
+    UnexpectedPacket
 }
 
+/// A wrapper struct for [`BuiltUartPeripheral`] that implements [`Reader`] and
+/// [`Writer`] so that [`bincode`] can be used to read and write data to UART.
 pub struct UartRW<'a, UART: Deref<Target = pac::uart0::RegisterBlock>, RX, TX, CTS, RTS>(pub &'a mut BuiltUartPeripheral<UART, RX, TX, CTS, RTS>);
 
 impl<'a, UART, RX, TX, CTS, RTS> Reader for UartRW<'a, UART, RX, TX, CTS, RTS>
@@ -50,6 +55,7 @@ where
 { }
 
 pub trait RawRW: Reader + Writer + Sized {
+    /// Blocking function that waits for an ACK to be recieved.
     fn wait_for_ack(&mut self) {
         let header = self.read_header();
         
@@ -66,6 +72,7 @@ pub trait RawRW: Reader + Writer + Sized {
         }
     }
 
+    /// Reads a packet header.
     fn read_header(&mut self) -> MessageHeader {
         // Block until we get the magic character
         let mut buf = [0u8];
@@ -83,10 +90,12 @@ pub trait RawRW: Reader + Writer + Sized {
         }
     }
 
+    /// Writes an ACK.
     fn write_ack(&mut self) {
         self.write_header(Opcode::ACK, 0);
     }
 
+    /// Writes a packet header.
     fn write_header(&mut self, opcode: Opcode, length: u16) {
         let header = MessageHeader {
             magic: MAGIC,
@@ -98,7 +107,8 @@ pub trait RawRW: Reader + Writer + Sized {
         bincode::encode_into_writer(header, self, BINCODE_CONFIG).unwrap();
     }
 
-    fn write_to_wire(&mut self, msg: &Packet) {
+    /// Writes a packet, using [`BodyRW`] to properly send the body.
+    fn write_packet(&mut self, msg: &Packet) {
         self.write_header(msg.opcode(), msg.encoded_size());
         if msg.opcode().should_ack() {
             self.wait_for_ack();
@@ -124,32 +134,31 @@ pub trait RawRW: Reader + Writer + Sized {
         rw.finish_write();
     }
 
-    fn read_from_wire<'l, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l EncodedSubscriptionKey>>(&mut self, get_key: F) -> ReadResult {
+    /// Reads a packet. When an encoded frame is recieved, it will attempt to get a valid key for
+    /// that subscription using [`get_key`] and if the decode fails or a key is not found, it will
+    /// return a [`ReadResult::FrameDecodeError`]. If a packet is recieved that the decoder
+    /// shouldn't have to handle, a [`ReadResult::UnexpectedPacket`] is returned.
+    fn read_packet<'l, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l EncodedSubscriptionKey>>(&mut self, get_key: F) -> ReadResult {
         let header = self.read_header();
-
         if header.opcode.should_ack() {
             self.write_ack();
         }
 
         if header.length == 0 {
             match header.opcode {
-                Opcode::ACK => { ReadResult::Packet(Packet::Ack) },
                 Opcode::LIST => { ReadResult::Packet(Packet::ListCommand) },
-                Opcode::SUBSCRIBE => { ReadResult::Packet(Packet::SubscriptionResponse) },
-                _ => { ReadResult::None }
+                _ => { ReadResult::UnexpectedPacket }
             }
         } else {
             let mut rw = BodyRW::new(header.opcode.should_ack(), self);
 
             let res = match header.opcode {
-                Opcode::LIST => { 
-                    let _: u32 = rw.read_body();
-                    ReadResult::Packet(Packet::ListResponse(rw.read_vector_body(header.length as usize)))
-                }
                 Opcode::DECODE => { 
                     let header = rw.read_body();
                     let key = get_key(&header);
-                    let frame = rw.decode_off_wire(&header, key);
+                    let frame = rw.decode_off_wire(key);
+
+                    // Make sure the hash of our frame data equals the mac_hash in the packet header
                     if let Some(frame) = frame {
                         let mut hasher: Sha256 = Digest::new();
                         hasher.update(&frame.0);
@@ -169,7 +178,7 @@ pub trait RawRW: Reader + Writer + Sized {
 
                     ReadResult::Packet(Packet::SubscriptionCommand(SubscriptionData { header, keys }))
                 }
-                _ => { return ReadResult::None; }
+                _ => { return ReadResult::UnexpectedPacket; }
             };
 
             rw.finish_read();

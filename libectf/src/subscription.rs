@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{frame::{EncodedFramePacket, EncodedFramePacketHeader, Frame}, key::Key, masks::{characterize_range, MASKS}};
 
+/// Channel information that is sent in response to a list subscription command.
 #[derive(Debug, Encode, Decode)]
 pub struct ChannelInfo {
     pub channel: u32,
@@ -11,39 +12,40 @@ pub struct ChannelInfo {
     pub end: u64
 }
 
+/// Subscription data as it is sent, recieved, and stored
 #[derive(Debug)]
 pub struct SubscriptionData {
     pub header: SubscriptionDataHeader,
+    /// Encoded subscription keys. In transport the key data is encrypted using the device key.
     pub keys: Vec<EncodedSubscriptionKey>
 }
 
+/// Subscription channel, time range, and a mac_hash for data authentication.
 #[derive(Debug, Encode, Decode)]
 pub struct SubscriptionDataHeader {
     pub start_timestamp: u64,
     pub end_timestamp: u64,
     pub channel: u32,
+    /// SHA256 of the entire contents of the subscription data packet. Calculated like this:
+    /// `SHA256(start_timestamp, end_timestamp, channel, {mask_idx, UNENCRYPTED_KEY} for each key)`
     pub mac_hash: [u8; 32]
 }
 
 #[derive(Debug, Encode, Decode)]
+/// An encoded subscription key valid for a bitrange. The start_timestamp isn't encoded with the
+/// key because they are all adjacent.
 pub struct EncodedSubscriptionKey {
     pub mask_idx: u8,
     pub key: Key
 }
 
-impl EncodedSubscriptionKey {
-    pub fn decode_frame_packet(&self, frame: &EncodedFramePacket) -> Frame {
-        let mut data = frame.data[self.mask_idx as usize].clone();
-        self.key.cipher().decode_frame(&mut data);
-        data
-    }
-}
-
 impl SubscriptionData {
+    /// Checks if we can use this subscription to decode a frame.
     pub fn contains_frame(&self, frame: &EncodedFramePacketHeader) -> bool {
         self.header.channel == frame.channel && self.header.start_timestamp <= frame.timestamp && self.header.end_timestamp >= frame.timestamp
     }
 
+    /// Finds a key we can use to decode a frame.
     pub fn key_for_frame(&self, header: &EncodedFramePacketHeader) -> Option<&EncodedSubscriptionKey> {
         if !self.contains_frame(header) {
             return None;
@@ -61,6 +63,8 @@ impl SubscriptionData {
         None
     }
 
+    /// Decrypt the subscription keys using the device_key and validate that the mac_hash matches
+    /// the hash of our decrypted data.
     pub fn decrypt_and_authenticate(&mut self, device_key: &Key) -> bool {
         let mut hasher: Sha256 = Digest::new();
         hasher.update(self.header.start_timestamp.to_le_bytes());
@@ -78,6 +82,7 @@ impl SubscriptionData {
         <[u8; 32]>::from(hasher.finalize()) == self.header.mac_hash
     }
 
+    /// Generate a subscription key.
     pub fn generate(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: u32) -> SubscriptionData {
         let device_key = Key::for_device(device_id, secrets);
 
@@ -89,7 +94,7 @@ impl SubscriptionData {
         let mut device_key_cipher = device_key.cipher();
 
         let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
-            let mut key = Key::for_frame(t, mask_idx, channel, secrets);
+            let mut key = Key::for_bitrange(t, mask_idx, channel, secrets);
 
             hasher.update(mask_idx.to_le_bytes());
             hasher.update(key.0);

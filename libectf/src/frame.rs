@@ -5,8 +5,11 @@ use sha2::{Digest, Sha256};
 
 use crate::{key::Key, masks::MASKS};
 
+/// Size of each frame in bytes.
 pub const FRAME_SIZE: usize = 64;
-pub const NUM_ENCODED_FRAMES: usize = MASKS.len();
+
+/// The number of encrypted frames in an encoded frame packet.
+pub const NUM_ENCRYPTED_FRAMES: usize = MASKS.len();
 
 #[derive(Encode, Decode, Clone, PartialEq, Eq)]
 pub struct Frame(pub [u8; FRAME_SIZE]);
@@ -15,13 +18,15 @@ pub struct Frame(pub [u8; FRAME_SIZE]);
 pub struct EncodedFramePacketHeader {
     pub channel: u32,
     pub timestamp: u64,
+    /// Upper half of the SHA256 of the frame that was encoded.
     pub mac_hash: [u8; 16]
 }
 
+/// Encoded frame packet that is sent to the decoder.
 #[derive(Debug, Encode, Decode)]
 pub struct EncodedFramePacket {
     pub header: EncodedFramePacketHeader,
-    pub data: [Frame; NUM_ENCODED_FRAMES],
+    pub data: [Frame; NUM_ENCRYPTED_FRAMES],
 }
 
 impl Frame {
@@ -29,16 +34,19 @@ impl Frame {
         let mut hasher: Sha256 = Digest::new();
         hasher.update(&self.0);
 
-        // Stupidity because I don't want frame to implement copy
-        let mut data: [MaybeUninit<Frame>; NUM_ENCODED_FRAMES] = unsafe { MaybeUninit::uninit().assume_init() };
+        // I wish there was an easier way to do this without making Frame implement copy, but all
+        // this code does is copy our frame into an array with size NUM_ENCRYPTED_FRAMES.
+        let mut data: [MaybeUninit<Frame>; NUM_ENCRYPTED_FRAMES] = unsafe { MaybeUninit::uninit().assume_init() };
         for elem in &mut data {
             *elem = MaybeUninit::new(self.clone());
         }
-        let mut data: [Frame; NUM_ENCODED_FRAMES] = unsafe { core::mem::transmute(data) };
+        let mut data: [Frame; NUM_ENCRYPTED_FRAMES] = unsafe { core::mem::transmute(data) };
 
+        // Loop through every possible mask and encrypt the frame with the key for the bitrange
+        // that contains this frame.
         for (mask_idx, mask) in MASKS.iter().enumerate() {
-            let key = Key::for_frame(timestamp & !((1 << mask) - 1), mask_idx as u8, channel, secrets);
-            key.cipher().encode_frame(&mut data[mask_idx]);
+            let key = Key::for_bitrange(timestamp & !((1 << mask) - 1), mask_idx as u8, channel, secrets);
+            key.cipher().encrypt_frame(&mut data[mask_idx]);
         }
 
         EncodedFramePacket {
