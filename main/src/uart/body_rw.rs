@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 use bincode::{de::read::Reader, enc::write::Writer, Decode, Encode};
-use libectf::{frame::{EncodedFramePacketHeader, Frame, NUM_ENCODED_FRAMES}, subscription::EncodedSubscriptionKey, BINCODE_CONFIG};
+use libectf::{frame::{Frame, NUM_ENCRYPTED_FRAMES}, subscription::EncodedSubscriptionKey, BINCODE_CONFIG};
 
 use super::raw_rw::RawRW;
 
@@ -72,7 +72,7 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         let mut res: Option<Frame> = None;
 
         if let Some(key) = key {
-            for idx in 0..NUM_ENCODED_FRAMES {
+            for idx in 0..NUM_ENCRYPTED_FRAMES {
                 let f: Frame = self.read_body();
                 if idx == key.mask_idx as usize {
                     res = Some(f);
@@ -84,7 +84,7 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
             }
         } else {
             // Throw all frames away
-            for _ in 0..NUM_ENCODED_FRAMES {
+            for _ in 0..NUM_ENCRYPTED_FRAMES {
                 let _: Frame = self.read_body();
             }
         }

@@ -1,4 +1,4 @@
-use libectf::packet::{EncodeToVec, Frame, SubscriptionData};
+use libectf::{frame::Frame, subscription::SubscriptionData, EncodeToVec};
 use pyo3::prelude::*;
 use rand::{rngs::OsRng, TryRngCore};
 

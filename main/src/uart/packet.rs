@@ -30,9 +30,9 @@ pub struct MessageHeader {
     pub length: u16,
 }
 
-#[derive(Debug)]
 /// Every type of packet that can be sent/recieved (omitting the Decode command since this 
 /// struct is never constructed and is instead recieved one frame at a time)
+#[derive(Debug)]
 pub enum Packet {
     ListCommand,
     ListResponse(Vec<ChannelInfo>),
@@ -41,8 +41,6 @@ pub enum Packet {
     SubscriptionResponse,
 
     DecodeResponse(Frame),
-
-    Ack,
 
     #[allow(dead_code)]
     Debug(String),
@@ -64,7 +62,7 @@ impl Packet {
     /// Finds the encoded size of a packet.
     pub(super) fn encoded_size(&self) -> u16 {
         match self {
-            Packet::ListCommand | Packet::SubscriptionResponse | Packet::Ack => { 0 }
+            Packet::ListCommand | Packet::SubscriptionResponse => { 0 }
             Packet::ListResponse(vec) => {
                 let mut size_finder = SizeFinder(0);
                 bincode::encode_into_writer(0u32, &mut size_finder, BINCODE_CONFIG).unwrap();
@@ -97,7 +95,6 @@ impl Packet {
             Packet::ListCommand | Packet::ListResponse(_) => { Opcode::LIST }
             Packet::SubscriptionCommand(_) | Packet::SubscriptionResponse => { Opcode::SUBSCRIBE }
             Packet::DecodeResponse(_) => { Opcode::DECODE }
-            Packet::Ack => { Opcode::ACK }
             Packet::Debug(_) => { Opcode::DEBUG }
             Packet::Error(_) => { Opcode::ERROR }
         }

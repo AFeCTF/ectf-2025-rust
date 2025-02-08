@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use bincode::{Decode, Encode};
 use sha2::{Digest, Sha256};
 
-use crate::{frame::{EncodedFramePacket, EncodedFramePacketHeader, Frame}, key::Key, masks::{characterize_range, MASKS}};
+use crate::{frame::EncodedFramePacketHeader, key::Key, masks::{characterize_range, MASKS}};
 
 /// Channel information that is sent in response to a list subscription command.
 #[derive(Debug, Encode, Decode)]
