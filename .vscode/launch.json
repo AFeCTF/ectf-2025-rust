@@ -16,10 +16,10 @@
                 "gdbPath": "C:/MaximSDK/Tools/GNUTools/10.3/bin/arm-none-eabi-gdb.exe",
                 "serverpath": "C:/MaximSDK/Tools/OpenOCD/openocd.exe",
             },
-            "cwd": "${workspaceRoot}/main",
+            "cwd": "${workspaceRoot}/decoder",
             "preLaunchTask": "Cargo Build (debug)",
             "runToEntryPoint": "main",
-            "executable": "${workspaceRoot}/target/thumbv7em-none-eabihf/debug/main",
+            "executable": "${workspaceRoot}/target/thumbv7em-none-eabihf/debug/decoder",
             "device": "MAX78000",
             "configFiles": [
                 "interface/cmsis-dap.cfg",

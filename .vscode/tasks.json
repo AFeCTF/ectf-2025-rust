@@ -12,7 +12,7 @@
             "label": "Cargo Build (debug)",
             "type": "process",
             "command": "cargo",
-            "args": ["build", "-p", "main", "--target", "thumbv7em-none-eabihf"],
+            "args": ["build", "-p", "decoder", "--target", "thumbv7em-none-eabihf"],
             "problemMatcher": [
                 "$rustc"
             ],
@@ -25,7 +25,7 @@
             "label": "Cargo Build (release)",
             "type": "process",
             "command": "cargo",
-            "args": ["build", "-p", "main", "--target", "thumbv7em-none-eabihf", "--release"],
+            "args": ["build", "-p", "decoder", "--target", "thumbv7em-none-eabihf", "--release"],
             "problemMatcher": [
                 "$rustc"
             ],
