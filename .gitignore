@@ -27,6 +27,7 @@ main/trajectories/
 **/poetry.lock
 
 decoder/src/keys.rs
+venv/
 test/
 secrets/
 .DS_Store

@@ -12,7 +12,7 @@ ARCH = platform.machine().lower()
 
 # Map to wheel tags
 PLATFORM_TAG = {
-    "linux": f"manylinux_{ARCH}",
+    "linux": f"manylinux_2_17_{ARCH}",
     "darwin": f"macosx_{ARCH}",
     "win32": "win_amd64" if ARCH in ["amd64", "x86_64"] else "win_arm64"
 }.get(SYSTEM_PLATFORM, "unknown")
@@ -41,7 +41,7 @@ setup(
     name="ectf25_design",
     version="2025.0+example",
     install_requires=[
-        "loguru"
+        "loguru",
         f"ectf25_design_rs @ file:///{valid_wheel}"
     ],
 )
