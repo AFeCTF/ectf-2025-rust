@@ -35,11 +35,14 @@ if not valid_wheel:
     raise FileNotFoundError(f"No compatible wheel found in {WHEEL_DIR} for {PY_VERSION} on {PLATFORM_TAG}")
 
 # Force install the valid wheel
-subprocess.run(["pip", "install", valid_wheel], check=True)
+# subprocess.run(["pip", "install", valid_wheel], check=True)
 
 setup(
     name="ectf25_design",
     version="2025.0+example",
-    install_requires=["loguru"],
+    install_requires=[
+        "loguru"
+        f"ectf25_design_rs @ file:///{valid_wheel}"
+    ],
 )
 
