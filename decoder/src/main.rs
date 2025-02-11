@@ -6,8 +6,8 @@ extern crate alloc;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use embedded_alloc::LlffHeap as Heap;
+use keys::DECODER_KEY;
 use libectf::frame::EncodedFramePacketHeader;
-use libectf::key::Key;
 use libectf::subscription::{ChannelInfo, SubscriptionData};
 use max7800x_hal as hal;
 use uart::packet::Packet;
@@ -25,6 +25,7 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 // use cortex_m_semihosting::heprintln; // uncomment to use this for printing through semihosting
 
 mod uart;
+mod keys;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -35,8 +36,6 @@ static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP
 fn main() -> ! {
     // Initialize the Heap
     unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE); }
-
-    let device_key: Key = Key([0; 8]);  // TODO
 
     let p = pac::Peripherals::take().unwrap();
 
@@ -92,7 +91,7 @@ fn main() -> ! {
             ReadResult::Packet(Packet::SubscriptionCommand(mut data)) => {
                 // write_to_wire(&Packet::Debug(format!("Got subscription data {:?} with {} keys", data.header, data.keys.len())), &mut UartRW(&mut console));
 
-                if data.decrypt_and_authenticate(&device_key) {
+                if data.decrypt_and_authenticate(&DECODER_KEY) {
                     rw.write_packet(&Packet::SubscriptionResponse);
                     subscriptions.push(data);
                 } else {

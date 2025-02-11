@@ -10,12 +10,42 @@
 //!
 //! The build script also sets the linker flags to tell it which link script to use.
 
-use std::env;
+use std::{env, fs, io};
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn main() {
+use libectf::key::Key;
+use quote::quote;
+
+const DEFAULT_DECODER_ID: u32 = 0;
+const SECRETS_PATH: &str = "../secrets";
+
+fn main() -> anyhow::Result<()> {
+    let decoder_id: u32 = match env::var("DECODER_ID") {
+        Ok(s) => { s.parse().unwrap_or(DEFAULT_DECODER_ID) },
+        Err(_) => { DEFAULT_DECODER_ID },
+    };
+
+    let secrets_file = fs::read_dir(SECRETS_PATH)?
+        .filter_map(Result::ok)
+        .find(|e| e.path().is_file())
+        .ok_or(io::Error::new(io::ErrorKind::NotFound, "Secrets file not found"))?;
+
+    let secrets: Vec<u8> = fs::read(secrets_file.path())?;
+
+    let decoder_key = Key::for_device(decoder_id, &secrets).0;
+
+    let code = quote! {
+        #![allow(dead_code)]
+        use libectf::key::Key;
+        pub static DECODER_ID: u32 = #decoder_id;
+        pub static DECODER_KEY: Key = Key([#(#decoder_key),*]);
+    };
+
+    let dest_path = Path::new("src/keys.rs");
+    fs::write(dest_path, code.to_string()).expect("Failed to write keys.rs");
+
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -40,4 +70,6 @@ fn main() {
 
     // Set the linker script to the one provided by cortex-m-rt.
     println!("cargo:rustc-link-arg=-Tlink.x");
+
+    Ok(())
 }

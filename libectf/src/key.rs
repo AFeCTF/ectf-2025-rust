@@ -28,17 +28,16 @@ impl Key {
     }
 
     /// Generate a device key using the device id and the global secrets.
-    pub(crate) fn for_device(device_id: u32, secrets: &[u8]) -> Key {
+    pub fn for_device(device_id: u32, secrets: &[u8]) -> Key {
         let mut hasher: Sha256 = Digest::new();
         hasher.update(secrets);
         hasher.update(device_id.to_le_bytes());
-        let _hash: [u8; 32] = hasher.finalize().into();
-        // Key(hash[..8].try_into().unwrap())
-        Key([0; 8])
+        let hash: [u8; 32] = hasher.finalize().into();
+        Key(hash[..8].try_into().unwrap())
     }
 
     /// Generate a subscripton key for a bitrange.
-    pub(crate) fn for_bitrange(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
+    pub fn for_bitrange(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
         let mut hasher: Sha256 = Digest::new();
         hasher.update(secrets);
         hasher.update(start_timestamp.to_le_bytes());
