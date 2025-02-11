@@ -1,7 +1,7 @@
 source ../venv/bin/activate
 
 # ARM Linux
-docker run --rm -v $(pwd):/io -v $(pwd)/../libectf:/libectf ghcr.io/pyo3/maturin build --release -i python3.11 python3.12 python3.13
+docker run --platform linux/arm64 --rm -v $(pwd):/io -v $(pwd)/../libectf:/libectf ghcr.io/pyo3/maturin build --release -i python3.11 python3.12 python3.13
 
 # x86_64 Linux
 docker run --platform linux/amd64 --rm -v $(pwd):/io -v $(pwd)/../libectf:/libectf ghcr.io/pyo3/maturin build --release -i python3.11 python3.12 python3.13
