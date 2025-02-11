@@ -4,7 +4,7 @@ import os
 import sys
 
 # Get Python version and platform
-PY_VERSION = f"cp{sys.version_info.major}{sys.version_info.minor}"  # Example: "cp311"
+PY_VERSIONS = [f"cp{sys.version_info.major}{i}" for i in range(1, sys.version_info.minor+1)]  # Example: "cp311"
 PLATFORM_TAG = {
     "linux": "manylinux",
     "darwin": "macosx",
@@ -21,9 +21,10 @@ whl_candidates = glob.glob(os.path.join(WHEEL_DIR, "ectf25_design_rs-*.whl"))
 # Find a wheel that matches the current Python version and platform
 valid_wheel = None
 for whl in whl_candidates:
-    if PY_VERSION in whl and PLATFORM_TAG in whl:
-        valid_wheel = whl
-        break  # Stop at the first compatible match
+    for PY_VERSION in PY_VERSIONS:
+        if PY_VERSION in whl and PLATFORM_TAG in whl:
+            valid_wheel = whl
+            break  # Stop at the first compatible match
 
 if not valid_wheel:
     raise FileNotFoundError(f"No compatible wheel found in {WHEEL_DIR} for {PY_VERSION} on {PLATFORM_TAG}")
