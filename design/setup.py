@@ -15,7 +15,7 @@ if PLATFORM_TAG == "unknown":
     raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
 # Locate wheel files
-WHEEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../ectf25_design_rs/target/wheels"))
+WHEEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../ectf25_design_rs/wheels"))
 whl_candidates = glob.glob(os.path.join(WHEEL_DIR, "ectf25_design_rs-*.whl"))
 
 # Find a wheel that matches the current Python version and platform
