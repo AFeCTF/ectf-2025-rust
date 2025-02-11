@@ -68,6 +68,8 @@ fn main() -> ! {
     let mut subscriptions: Vec<SubscriptionData> = Vec::new();
 
     let mut rw = UartRW(&mut console);
+    
+    let mut most_recent_timestamp = None;
 
     loop {
         // Read a packet from the wire. This function also handles frame decoding
@@ -79,7 +81,7 @@ fn main() -> ! {
             }
 
             None
-        });
+        }, &mut most_recent_timestamp);
 
         match p {
             ReadResult::DecodedFrame(frame) => {

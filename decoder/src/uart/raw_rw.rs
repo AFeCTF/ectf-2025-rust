@@ -138,8 +138,9 @@ pub trait RawRW: Reader + Writer + Sized {
     /// that subscription using [`get_key`] and if the decode fails or a key is not found, it will
     /// return a [`ReadResult::FrameDecodeError`]. If a packet is recieved that the decoder
     /// shouldn't have to handle, a [`ReadResult::UnexpectedPacket`] is returned.
-    fn read_packet<'l, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l EncodedSubscriptionKey>>(&mut self, get_key: F) -> ReadResult {
+    fn read_packet<'l, F: FnOnce(&EncodedFramePacketHeader) -> Option<&'l EncodedSubscriptionKey>>(&mut self, get_key: F, most_recent_timestamp: &mut Option<u64>) -> ReadResult {
         let header = self.read_header();
+
         if header.opcode.should_ack() {
             self.write_ack();
         }
@@ -158,17 +159,23 @@ pub trait RawRW: Reader + Writer + Sized {
                     let key = get_key(&header);
                     let frame = rw.decode_off_wire(key);
 
-                    // Make sure the hash of our frame data equals the mac_hash in the packet header
-                    if let Some(frame) = frame {
-                        let mut hasher: Sha256 = Digest::new();
-                        hasher.update(&frame.0);
-                        if <[u8; 32]>::from(hasher.finalize())[..16] == header.mac_hash {
-                            ReadResult::DecodedFrame(DecodedFrame { header, frame })
+                    // Makes sure timestamp is valid and globally increasing
+                    if most_recent_timestamp.map(|t| header.timestamp <= t).unwrap_or(false) {
+                        ReadResult::FrameDecodeError
+                    } else {
+                        // Make sure the hash of our frame data equals the mac_hash in the packet header
+                        if let Some(frame) = frame {
+                            let mut hasher: Sha256 = Digest::new();
+                            hasher.update(&frame.0);
+                            if <[u8; 32]>::from(hasher.finalize())[..16] == header.mac_hash {
+                                *most_recent_timestamp = Some(header.timestamp);
+                                ReadResult::DecodedFrame(DecodedFrame { header, frame })
+                            } else {
+                                ReadResult::FrameDecodeError
+                            }
                         } else {
                             ReadResult::FrameDecodeError
                         }
-                    } else {
-                        ReadResult::FrameDecodeError
                     }
                 }
                 Opcode::SUBSCRIBE => { 
