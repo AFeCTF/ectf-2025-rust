@@ -1,0 +1,82 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <value>
+          <list size="69">
+            <item index="0" class="java.lang.String" itemvalue="httpx" />
+            <item index="1" class="java.lang.String" itemvalue="protobuf" />
+            <item index="2" class="java.lang.String" itemvalue="browser-cookie3" />
+            <item index="3" class="java.lang.String" itemvalue="googleapis-common-protos" />
+            <item index="4" class="java.lang.String" itemvalue="arrow" />
+            <item index="5" class="java.lang.String" itemvalue="python-dateutil" />
+            <item index="6" class="java.lang.String" itemvalue="h11" />
+            <item index="7" class="java.lang.String" itemvalue="pycparser" />
+            <item index="8" class="java.lang.String" itemvalue="markupsafe" />
+            <item index="9" class="java.lang.String" itemvalue="pyasn1-modules" />
+            <item index="10" class="java.lang.String" itemvalue="pycryptodomex" />
+            <item index="11" class="java.lang.String" itemvalue="certifi" />
+            <item index="12" class="java.lang.String" itemvalue="anyio" />
+            <item index="13" class="java.lang.String" itemvalue="ics" />
+            <item index="14" class="java.lang.String" itemvalue="soupsieve" />
+            <item index="15" class="java.lang.String" itemvalue="pynacl" />
+            <item index="16" class="java.lang.String" itemvalue="google-api-core" />
+            <item index="17" class="java.lang.String" itemvalue="intervaltree" />
+            <item index="18" class="java.lang.String" itemvalue="beautifulsoup4" />
+            <item index="19" class="java.lang.String" itemvalue="pwntools" />
+            <item index="20" class="java.lang.String" itemvalue="langdetect" />
+            <item index="21" class="java.lang.String" itemvalue="capstone" />
+            <item index="22" class="java.lang.String" itemvalue="cryptography" />
+            <item index="23" class="java.lang.String" itemvalue="deep-translator" />
+            <item index="24" class="java.lang.String" itemvalue="bcrypt" />
+            <item index="25" class="java.lang.String" itemvalue="attrs" />
+            <item index="26" class="java.lang.String" itemvalue="psutil" />
+            <item index="27" class="java.lang.String" itemvalue="paramiko" />
+            <item index="28" class="java.lang.String" itemvalue="pyelftools" />
+            <item index="29" class="java.lang.String" itemvalue="charset-normalizer" />
+            <item index="30" class="java.lang.String" itemvalue="google-cloud-core" />
+            <item index="31" class="java.lang.String" itemvalue="idna" />
+            <item index="32" class="java.lang.String" itemvalue="httpcore" />
+            <item index="33" class="java.lang.String" itemvalue="rsa" />
+            <item index="34" class="java.lang.String" itemvalue="ropgadget" />
+            <item index="35" class="java.lang.String" itemvalue="cffi" />
+            <item index="36" class="java.lang.String" itemvalue="h2" />
+            <item index="37" class="java.lang.String" itemvalue="pyasn1" />
+            <item index="38" class="java.lang.String" itemvalue="requests" />
+            <item index="39" class="java.lang.String" itemvalue="mako" />
+            <item index="40" class="java.lang.String" itemvalue="numpy" />
+            <item index="41" class="java.lang.String" itemvalue="sniffio" />
+            <item index="42" class="java.lang.String" itemvalue="plumbum" />
+            <item index="43" class="java.lang.String" itemvalue="bardapi" />
+            <item index="44" class="java.lang.String" itemvalue="grpcio-status" />
+            <item index="45" class="java.lang.String" itemvalue="tatsu" />
+            <item index="46" class="java.lang.String" itemvalue="scapy" />
+            <item index="47" class="java.lang.String" itemvalue="urllib3" />
+            <item index="48" class="java.lang.String" itemvalue="google-cloud-translate" />
+            <item index="49" class="java.lang.String" itemvalue="pygments" />
+            <item index="50" class="java.lang.String" itemvalue="pyzbar" />
+            <item index="51" class="java.lang.String" itemvalue="six" />
+            <item index="52" class="java.lang.String" itemvalue="hyperframe" />
+            <item index="53" class="java.lang.String" itemvalue="opencv-python" />
+            <item index="54" class="java.lang.String" itemvalue="lz4" />
+            <item index="55" class="java.lang.String" itemvalue="packaging" />
+            <item index="56" class="java.lang.String" itemvalue="pyserial" />
+            <item index="57" class="java.lang.String" itemvalue="colored-traceback" />
+            <item index="58" class="java.lang.String" itemvalue="hpack" />
+            <item index="59" class="java.lang.String" itemvalue="sortedcontainers" />
+            <item index="60" class="java.lang.String" itemvalue="colorama" />
+            <item index="61" class="java.lang.String" itemvalue="proto-plus" />
+            <item index="62" class="java.lang.String" itemvalue="cachetools" />
+            <item index="63" class="java.lang.String" itemvalue="grpcio" />
+            <item index="64" class="java.lang.String" itemvalue="pysocks" />
+            <item index="65" class="java.lang.String" itemvalue="pytz" />
+            <item index="66" class="java.lang.String" itemvalue="unicorn" />
+            <item index="67" class="java.lang.String" itemvalue="rpyc" />
+            <item index="68" class="java.lang.String" itemvalue="google-auth" />
+          </list>
+        </value>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

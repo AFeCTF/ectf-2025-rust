@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="Black">
+    <option name="sdkName" value="Python 3.11 (ectf-2025-rust)" />
+  </component>
+  <component name="elmot.OpenOcdPlugin">
+    <option name="openOcdHome" value="$USER_HOME$/MaximSDK/Tools/OpenOCD/aarch64" />
+    <option name="shippedGdb" value="false" />
+  </component>
+</project>
