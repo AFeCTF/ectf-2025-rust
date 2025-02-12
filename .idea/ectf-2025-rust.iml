@@ -14,8 +14,12 @@
       <sourceFolder url="file://$MODULE_DIR$/hal/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/libectf/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/ectf25_design_rs/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/decoder/libectf/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/decoder/main/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/venv" />
+      <excludeFolder url="file://$MODULE_DIR$/decoder/main/target" />
+      <excludeFolder url="file://$MODULE_DIR$/ectf25_design_rs/target" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

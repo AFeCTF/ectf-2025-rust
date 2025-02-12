@@ -19,7 +19,7 @@ use libectf::key::Key;
 use quote::quote;
 
 const DEFAULT_DECODER_ID: u32 = 0xdeadbeef;
-const SECRETS_PATH: &str = "../secrets";
+const SECRETS_PATH: &str = "../../secrets";
 
 fn main() -> anyhow::Result<()> {
     let decoder_id: u32 = match env::var("DECODER_ID") {

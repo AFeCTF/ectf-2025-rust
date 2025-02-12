@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [ 
-  "libectf",
-  "decoder",
+  "decoder/libectf",
+  "decoder/main",
   "ectf25_design_rs"
 ]

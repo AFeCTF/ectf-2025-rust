@@ -48,12 +48,12 @@ pub enum Packet {
 }
 
 /// A dummy writer that stores the amount of bytes written.
-struct SizeFinder(u16);
+struct SizeFinder(usize);
 
 impl Writer for SizeFinder {
     fn write(&mut self, bytes: &[u8]) -> Result<(), bincode::error::EncodeError> {
         // TODO error on overflow (both in casting and addassign)
-        self.0 += bytes.len() as u16;
+        self.0 += bytes.len();
         Ok(())
     }
 }
@@ -69,7 +69,7 @@ impl Packet {
                 for entry in vec {
                     bincode::encode_into_writer(entry, &mut size_finder, BINCODE_CONFIG).unwrap();
                 }
-                size_finder.0
+                size_finder.0 as u16
             }
             Packet::SubscriptionCommand(subscription_data) => {
                 let mut size_finder = SizeFinder(0);
@@ -77,12 +77,12 @@ impl Packet {
                 for entry in &subscription_data.keys {
                     bincode::encode_into_writer(entry, &mut size_finder, BINCODE_CONFIG).unwrap();
                 }
-                size_finder.0
+                size_finder.0 as u16
             }
             Packet::DecodeResponse(frame) => {
                 let mut size_finder = SizeFinder(0);
                 bincode::encode_into_writer(frame, &mut size_finder, BINCODE_CONFIG).unwrap();
-                size_finder.0
+                size_finder.0 as u16
             }
             Packet::Debug(s) => { s.len() as u16 }
             Packet::Error(s) => { s.len() as u16 }

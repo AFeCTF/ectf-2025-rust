@@ -1,11 +1,12 @@
 [package]
-name = "decoder"
+name = "main"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 libectf = { path = "../libectf" }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7.5", features = ["set-sp", "set-vtor"] }
 embedded-hal-nb = "1.0.0"
 embedded-io = "0.6.1"
 max7800x-hal = "0.4.0"
