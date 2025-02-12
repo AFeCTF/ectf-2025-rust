@@ -3,7 +3,7 @@ import importlib.util
 spec = importlib.util.find_spec("ectf25_design_rs")
 
 if spec is None or spec.loader is None:
-    print("Installing rust lib...")
+    print("Installing Rust lib...")
 
     import glob
     import os
@@ -41,4 +41,4 @@ if spec is None or spec.loader is None:
         raise FileNotFoundError(f"No compatible wheel found in {WHEEL_DIR} for {PY_VERSION} on {PLATFORM_TAG}")
 
     # Force install the valid wheel
-    subprocess.run(["pip", "install", valid_wheel], check=True)
+    subprocess.run([sys.executable, "-m" , "pip", "install", valid_wheel], check=True)
