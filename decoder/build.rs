@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use libectf::key::Key;
 use quote::quote;
 
-const DEFAULT_DECODER_ID: u32 = 0;
+const DEFAULT_DECODER_ID: u32 = 0xdeadbeef;
 const SECRETS_PATH: &str = "../secrets";
 
 fn main() -> anyhow::Result<()> {
