@@ -46,6 +46,9 @@ fn main() -> anyhow::Result<()> {
     let dest_path = Path::new("src/keys.rs");
     fs::write(dest_path, code.to_string()).expect("Failed to write keys.rs");
 
+    // If we have new secrets we should rebuild
+    println!("cargo:rerun-if-changed={}", SECRETS_PATH);
+
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
