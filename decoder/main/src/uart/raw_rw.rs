@@ -1,8 +1,10 @@
+use alloc::vec;
 use core::ops::Deref;
 
+use alloc::vec::Vec;
 use bincode::{de::read::Reader, enc::write::Writer};
 use embedded_io::Read;
-use libectf::{frame::{EncodedFramePacketHeader, Frame}, subscription::{EncodedSubscriptionKey, SubscriptionData}, BINCODE_CONFIG};
+use libectf::{decode_from_vec, frame::{EncodedFramePacketHeader, Frame, NUM_ENCRYPTED_FRAMES}, subscription::{EncodedSubscriptionKey, SubscriptionData}, BINCODE_CONFIG};
 use max7800x_hal::{pac, uart::BuiltUartPeripheral};
 use sha2::{Digest, Sha256};
 
@@ -145,19 +147,46 @@ pub trait RawRW: Reader + Writer + Sized {
             self.write_ack();
         }
 
+        let mut read_buf: Vec<u8> = vec![0; header.length as usize];
+
+        let mut remaining = read_buf.as_mut_slice();
+        while !remaining.is_empty() {
+            let (chunk, rest) = remaining.split_at_mut(256.min(remaining.len()));
+            self.read(chunk).unwrap();
+            self.write_ack();
+            remaining = rest;
+        }
+
         if header.length == 0 {
             match header.opcode {
                 Opcode::LIST => { ReadResult::Packet(Packet::ListCommand) },
                 _ => { ReadResult::UnexpectedPacket }
             }
         } else {
-            let mut rw = BodyRW::new(header.opcode.should_ack(), self);
-
             let res = match header.opcode {
                 Opcode::DECODE => { 
-                    let header = rw.read_body();
+                    let header = decode_from_vec(&mut read_buf);
                     let key = get_key(&header);
-                    let frame = rw.decode_off_wire(key);
+
+                    let mut frame: Option<Frame> = None;
+
+                    if let Some(key) = key {
+                        for idx in 0..NUM_ENCRYPTED_FRAMES {
+                            let f: Frame = decode_from_vec(&mut read_buf);
+                            if idx == key.mask_idx as usize {
+                                frame = Some(f);
+                            }
+                        }
+                        
+                        if let Some(f) = frame.as_mut() {
+                            key.key.cipher().decode_frame(f);
+                        }
+                    } else {
+                        // Throw all frames away
+                        for _ in 0..NUM_ENCRYPTED_FRAMES {
+                            let _: Frame = decode_from_vec(&mut read_buf);
+                        }
+                    }
 
                     // Makes sure timestamp is valid and globally increasing
                     if most_recent_timestamp.map(|t| header.timestamp <= t).unwrap_or(false) {
@@ -166,7 +195,7 @@ pub trait RawRW: Reader + Writer + Sized {
                         // Make sure the hash of our frame data equals the mac_hash in the packet header
                         if let Some(frame) = frame {
                             let mut hasher: Sha256 = Digest::new();
-                            hasher.update(&frame.0);
+                            hasher.update(frame.0);
                             if <[u8; 32]>::from(hasher.finalize())[..16] == header.mac_hash {
                                 *most_recent_timestamp = Some(header.timestamp);
                                 ReadResult::DecodedFrame(DecodedFrame { header, frame })
@@ -179,16 +208,18 @@ pub trait RawRW: Reader + Writer + Sized {
                     }
                 }
                 Opcode::SUBSCRIBE => { 
-                    let packet_len = header.length as usize;
-                    let header = rw.read_body();
-                    let keys = rw.read_vector_body(packet_len);
+                    let _packet_len = header.length as usize;
+                    let header = decode_from_vec(&mut read_buf);
+                    let mut keys = Vec::new();
+
+                    while !read_buf.is_empty() {
+                        keys.push(decode_from_vec(&mut read_buf));
+                    }
 
                     ReadResult::Packet(Packet::SubscriptionCommand(SubscriptionData { header, keys }))
                 }
                 _ => { return ReadResult::UnexpectedPacket; }
             };
-
-            rw.finish_read();
 
             res
         }

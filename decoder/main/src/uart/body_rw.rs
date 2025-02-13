@@ -91,7 +91,7 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         
         res
     }
-    
+
     /// Write the final ACK once an entire packet has been recieved.
     pub(super) fn finish_read(&mut self) {
         if self.should_ack && self.cursor % Self::CHUNK_SIZE != 0 {
@@ -109,43 +109,22 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
 
 impl<'l, RW: RawRW> Writer for BodyRW<'l, RW> {
     fn write(&mut self, bytes: &[u8]) -> Result<(), bincode::error::EncodeError> {
-        // If we don't have to ack just increment the cursor and write the bytes normally
         if !self.should_ack {
             self.cursor += bytes.len();
-            return self.rw.write(bytes)
+            return self.rw.write(bytes);
         }
 
-        // How many bytes can we write until we have to wait for an ACK
-        let first_chunk_size = Self::CHUNK_SIZE - (self.cursor % Self::CHUNK_SIZE);
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            let chunk_size = (Self::CHUNK_SIZE - (self.cursor % Self::CHUNK_SIZE)).min(remaining.len());
+            let (chunk, rest) = remaining.split_at(chunk_size);
 
-        if first_chunk_size >= bytes.len() {
-            // If we can just write the entire packed do that and then check if we need to wait for
-            // an ACK
-            self.rw.write(bytes)?;
-            self.cursor += bytes.len();
+            self.rw.write(chunk)?;
+            self.cursor += chunk.len();
+            remaining = rest;
+
             if self.cursor % Self::CHUNK_SIZE == 0 {
                 self.rw.wait_for_ack();
-            }
-        } else {
-            // Write the first slice and then wait for an ACK
-            let first_slice = &bytes[0..first_chunk_size];
-            self.rw.write(first_slice)?;
-            self.rw.wait_for_ack();
-            self.cursor += first_slice.len();
-
-            // Iterate through the rest of the data and send it 256 bytes at a time, waiting for
-            // ACKs in between
-            for chunk in bytes[first_chunk_size..].chunks(256) {
-                // Sanity check!
-                if self.cursor % Self::CHUNK_SIZE != 0 {
-                    panic!("This should never happen!");
-                }
-
-                self.rw.write(chunk)?;
-                self.cursor += chunk.len();
-                if self.cursor % Self::CHUNK_SIZE == 0 {
-                    self.rw.wait_for_ack();
-                }
             }
         }
 
@@ -155,47 +134,25 @@ impl<'l, RW: RawRW> Writer for BodyRW<'l, RW> {
 
 impl<'l, RW: RawRW> Reader for BodyRW<'l, RW> {
     fn read(&mut self, bytes: &mut [u8]) -> Result<(), bincode::error::DecodeError> {
-        // If we don't have to ack just increment the cursor and write the bytes normally
         if !self.should_ack {
             self.cursor += bytes.len();
-            return self.rw.read(bytes)
+            return self.rw.read(bytes);
         }
 
-        // How many bytes can we read until we have to write an ACK
-        let first_chunk_size = Self::CHUNK_SIZE - (self.cursor % Self::CHUNK_SIZE);
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            let chunk_size = (Self::CHUNK_SIZE - (self.cursor % Self::CHUNK_SIZE)).min(remaining.len());
+            let (chunk, rest) = remaining.split_at_mut(chunk_size);
 
-        if first_chunk_size >= bytes.len() {
-            // If we can just read the entire packed do that and then check if we need to write
-            // an ACK
-            self.rw.read(bytes)?;
-            self.cursor += bytes.len();
+            self.rw.read(chunk)?;
+            self.cursor += chunk.len();
+            remaining = rest;
+
             if self.cursor % Self::CHUNK_SIZE == 0 {
                 self.rw.write_ack();
-            }
-        } else {
-            // Write the first slice and then wait for an ACK
-            let first_slice = &mut bytes[0..first_chunk_size];
-            self.rw.read(first_slice)?;
-            self.cursor += first_slice.len();
-            self.rw.write_ack();
-
-            // Iterate through the rest of the data and send it 256 bytes at a time, waiting for
-            // ACKs in between
-            for chunk in bytes[first_chunk_size..].chunks_mut(256) {
-                // Sanity check!
-                if self.cursor % Self::CHUNK_SIZE != 0 {
-                    panic!("This should never happen!");
-                }
-
-                self.rw.read(chunk)?;
-                self.cursor += chunk.len();
-                if self.cursor % Self::CHUNK_SIZE == 0 {
-                    self.rw.write_ack();
-                }
             }
         }
 
         Ok(())
     }
 }
-
