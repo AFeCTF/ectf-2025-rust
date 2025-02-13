@@ -27,7 +27,7 @@ if spec is None or spec.loader is None:
         raise RuntimeError(f"Unsupported platform: {SYSTEM_PLATFORM} ({ARCH})")
 
     # Locate wheel files
-    WHEEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../ectf25_design_rs/wheels"))
+    WHEEL_DIR = os.path.abspath(os.path.join(os.getcwd(), "./ectf25_design_rs/wheels"))
     whl_candidates = glob.glob(os.path.join(WHEEL_DIR, "ectf25_design_rs-*.whl"))
 
     # Match Python version, platform, and architecture
