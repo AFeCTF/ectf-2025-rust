@@ -55,6 +55,14 @@ pub trait RawRW: Sized + embedded_io::Read + embedded_io::Write {
         self.write_all(&data.to_le_bytes()).unwrap();
     }
 
+    fn write_u32(&mut self, data: u32) {
+        self.write_all(&data.to_le_bytes()).unwrap();
+    }
+
+    fn write_u64(&mut self, data: u64) {
+        self.write_all(&data.to_le_bytes()).unwrap();
+    }
+
     /// Reads a packet header.
     fn read_header(&mut self) -> MessageHeader {
         // Block until we get the magic character

@@ -119,7 +119,21 @@ fn main() -> ! {
         if header.length == 0 {
             match header.opcode {
                 Opcode::LIST => { 
-                    // TODO parse list command
+                    let mut res: Vec<u8> = Vec::new();
+
+                    res.extend_from_slice(&(subscriptions.len() as u32).to_le_bytes());
+
+                    for subscription in &mut subscriptions {
+                        let (subscription_header, _) = access_subscription(subscription);
+                        res.extend_from_slice(&subscription_header.channel.to_native().to_le_bytes());
+                        res.extend_from_slice(&subscription_header.start_timestamp.to_native().to_le_bytes());
+                        res.extend_from_slice(&subscription_header.end_timestamp.to_native().to_le_bytes());
+                    }
+
+                    rw.write_header(Opcode::LIST, res.len() as u16);
+                    let mut body_rw = BodyRW::new(header.opcode.should_ack(), rw, None);
+                    body_rw.write_bytes(&res);
+                    body_rw.finish_write();
                 },
                 _ => { 
                     // TODO undefined behavior, no other zero-length commands
@@ -128,8 +142,6 @@ fn main() -> ! {
         } else {
             let mut body_rw = BodyRW::new(header.opcode.should_ack(), rw, Some(p.dma.ch(0)));
             let mut packet = body_rw.start_dma_read(header.length as usize);
-
-            // while body_rw.dma_poll_for_ack() != header.length as usize { }
 
             match header.opcode {
                 Opcode::SUBSCRIBE => {

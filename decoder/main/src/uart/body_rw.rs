@@ -115,7 +115,7 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         self.cursor = 0;
     }
 
-    fn write_bytes(&mut self, bytes: &[u8]) {
+    pub fn write_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.rw.write_u8(*byte);
             self.cursor += 1;
@@ -199,14 +199,14 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
     // }
 
     /// Write the final ACK once an entire packet has been recieved.
-    pub(super) fn finish_read(&mut self) {
+    pub fn finish_read(&mut self) {
         if self.should_ack && self.cursor % Self::CHUNK_SIZE != 0 {
             self.rw.write_ack();
         }
     }
 
     /// Recieve the final ACK once an entire packet has been transmitted.
-    pub(super) fn finish_write(&mut self) {
+    pub fn finish_write(&mut self) {
         if self.should_ack && self.cursor % Self::CHUNK_SIZE != 0 {
             self.rw.wait_for_ack();
         }
