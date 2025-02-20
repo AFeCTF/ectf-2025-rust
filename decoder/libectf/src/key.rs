@@ -1,18 +1,33 @@
 use core::fmt::Debug;
 
 use aes::Aes128;
-use bincode::{Decode, Encode};
 use cipher::{generic_array::GenericArray, BlockDecryptMut, BlockEncryptMut, KeyInit, KeySizeUser};
+use rkyv::{Archive, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::frame::Frame;
+use crate::frame::{ArchivedFrame, Frame, FRAME_SIZE};
 
 /// 64-bit key that is extended with zeros to form an AES128 key
-#[derive(Encode, Decode)]
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(derive(Debug))]
 pub struct Key(pub [u8; 8]);
 
 /// Used to encrypt and decrypt data. Generated from a [`Key`].
 pub struct Cipher(Aes128);
+
+impl ArchivedKey {
+    /// Create a [`Cipher`] from a key. The [`Cipher`] should be reused as much as possible.
+    pub fn cipher(&self) -> Cipher {
+        Cipher(Aes128::new(&self.to_aes_key()))
+    }
+
+    /// Create an AES128 key from this key.
+    fn to_aes_key(&self) -> GenericArray<u8, <Aes128 as KeySizeUser>::KeySize> {
+        let mut data = [0u8; 16];
+        data[..8].copy_from_slice(&self.0);
+        data.into()
+    }
+}
 
 impl Key {
     /// Create a [`Cipher`] from a key. The [`Cipher`] should be reused as much as possible.
@@ -69,8 +84,8 @@ impl Cipher {
     }
 
     /// Decrypt a single frame with AES. Not to be confused with frame decoding.
-    pub fn decode_frame(&mut self, frame: &mut Frame) {
-        self.decrypt(&mut frame.0);
+    pub fn decode_frame(&mut self, frame: &mut [u8; FRAME_SIZE]) {
+        self.decrypt(frame);
     }
 }
 

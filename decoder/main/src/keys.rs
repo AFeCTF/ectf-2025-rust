@@ -1,1 +1,1 @@
-# ! [allow (dead_code)] use libectf :: key :: Key ; pub static DECODER_ID : u32 = 3735928559u32 ; pub static DECODER_KEY : Key = Key ([134u8 , 118u8 , 185u8 , 55u8 , 118u8 , 251u8 , 81u8 , 250u8]) ;
+# ! [allow (dead_code)] use libectf :: key :: Key ; pub static DECODER_ID : u32 = 3735928559u32 ; pub static DECODER_KEY : Key = Key ([166u8 , 2u8 , 200u8 , 136u8 , 73u8 , 19u8 , 98u8 , 10u8]) ;

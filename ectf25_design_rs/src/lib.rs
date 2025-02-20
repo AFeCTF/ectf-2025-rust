@@ -1,4 +1,4 @@
-use libectf::{frame::Frame, subscription::SubscriptionData, EncodeToVec};
+use libectf::{frame::Frame, subscription::SubscriptionData};
 use pyo3::prelude::*;
 use rand::{rngs::OsRng, TryRngCore};
 
@@ -16,7 +16,7 @@ impl Encoder {
 
     fn encode(&self, channel: u32, frame: Vec<u8>, timestamp: u64) -> Vec<u8> {
         let frame = Frame(frame.try_into().unwrap());
-        frame.encode(timestamp, channel, self.secrets.as_slice()).encode_to_vec()
+        rkyv::to_bytes::<rkyv::rancor::Error>(&frame.encode(timestamp, channel, self.secrets.as_slice())).unwrap().into_vec()
     }
 }
 
@@ -24,10 +24,10 @@ impl Encoder {
 fn gen_subscription(secrets: Vec<u8>, device_id: u32, start: u64, end: u64, channel: u32) -> Vec<u8> {
     let data = SubscriptionData::generate(secrets.as_slice(), start, end, channel, device_id);
 
-    let mut res = data.header.encode_to_vec();
+    let mut res = rkyv::to_bytes::<rkyv::rancor::Error>(&data.header).unwrap().into_vec();
     
     for key in data.keys {
-        res.extend(key.encode_to_vec());
+        res.extend(rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap().into_iter());
     }
 
     res

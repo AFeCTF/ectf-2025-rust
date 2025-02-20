@@ -1,6 +1,6 @@
 use core::{fmt::Debug, mem::MaybeUninit, str};
 
-use bincode::{Decode, Encode};
+use rkyv::{Archive, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{key::Key, masks::MASKS};
@@ -11,10 +11,10 @@ pub const FRAME_SIZE: usize = 64;
 /// The number of encrypted frames in an encoded frame packet.
 pub const NUM_ENCRYPTED_FRAMES: usize = MASKS.len();
 
-#[derive(Encode, Decode, Clone, PartialEq, Eq)]
+#[derive(Archive, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Frame(pub [u8; FRAME_SIZE]);
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Archive, Serialize, Deserialize)]
 pub struct EncodedFramePacketHeader {
     pub channel: u32,
     pub timestamp: u64,
@@ -23,7 +23,7 @@ pub struct EncodedFramePacketHeader {
 }
 
 /// Encoded frame packet that is sent to the decoder.
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Archive, Serialize, Deserialize)]
 pub struct EncodedFramePacket {
     pub header: EncodedFramePacketHeader,
     pub data: [Frame; NUM_ENCRYPTED_FRAMES],
