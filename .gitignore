@@ -21,7 +21,7 @@ Cargo.lock
 
 **/poetry.lock
 
-decoder/src/keys.rs
+decoder/main/src/keys.rs
 venv/
 test/
 secrets/
