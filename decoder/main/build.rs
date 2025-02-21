@@ -92,5 +92,9 @@ fn main() -> anyhow::Result<()> {
     // Set the linker script to the one provided by cortex-m-rt.
     println!("cargo:rustc-link-arg=-Tlink.x");
 
+    // Optimizations
+    println!("cargo:rustc-cfg=target_cpu=\"cortex-m4\"");
+    println!("cargo:rustc-rustflags=-C target-feature=+vfp4,+dsp");
+
     Ok(())
 }
