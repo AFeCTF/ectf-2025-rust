@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use rkyv::{Archive, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{frame::{ArchivedEncodedFramePacketHeader, EncodedFramePacketHeader}, key::Key, masks::{characterize_range, MASKS}};
+use crate::{frame::ArchivedEncodedFramePacketHeader, key::Key, masks::{characterize_range, MASKS}};
 
 /// Channel information that is sent in response to a list subscription command.
 #[derive(Debug, Archive, Serialize, Deserialize)]

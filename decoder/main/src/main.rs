@@ -3,16 +3,13 @@
 
 extern crate alloc;
 
-use alloc::format;
 use alloc::vec::Vec;
 use embedded_alloc::LlffHeap as Heap;
-use keys::DECODER_KEY;
-use libectf::frame::{ArchivedEncodedFramePacket, EncodedFramePacket, EncodedFramePacketHeader, Frame};
-use libectf::subscription::{self, ArchivedEncodedSubscriptionKey, ArchivedSubscriptionDataHeader, SubscriptionData};
+use keys::{CHANNEL_0_KEYS, DECODER_KEY};
+use libectf::frame::{ArchivedEncodedFramePacket, EncodedFramePacketHeader, Frame};
+use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscriptionDataHeader};
 use max7800x_hal::gcr::ClockForPeripheral;
-use max7800x_hal::gpio::{Af1, Pin};
 use max7800x_hal::pac::Uart0;
-use max7800x_hal::uart::BuiltUartPeripheral;
 use max7800x_hal as hal;
 use rkyv::{access_unchecked, access_unchecked_mut};
 use rkyv::util::AlignedVec;
@@ -21,7 +18,8 @@ use uart::body_rw::BodyRW;
 use uart::packet::Opcode;
 use uart::raw_rw::RawRW;
 use core::mem::{self, MaybeUninit};
-use core::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
+use core::ptr::slice_from_raw_parts_mut;
+use core::u64;
 
 pub use hal::pac;
 pub use hal::entry;
@@ -41,7 +39,6 @@ static HEAP: Heap = Heap::empty();
 const HEAP_SIZE: usize = 32768*3;
 static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
 
-static mut RW: Option<BuiltUartPeripheral<Uart0, Pin<0, 0, Af1>, Pin<0, 1, Af1>, (), ()>> = None;
 static mut UART0: Option<Uart0> = None;
 
 fn access_subscription(packet: &mut AlignedVec) -> (&ArchivedSubscriptionDataHeader, &mut [ArchivedEncodedSubscriptionKey]) {
@@ -74,6 +71,7 @@ fn main() -> ! {
 
     unsafe { p.dma.enable_clock(&mut p.gcr); }
 
+    // Bad practice is an understatement
     #[allow(static_mut_refs)]
     let uart0 = unsafe { UART0 = Some(p.uart0); UART0.as_mut().unwrap_unchecked() };
 
@@ -91,7 +89,7 @@ fn main() -> ! {
     // Configure UART to host computer with 115200 8N1 settings
     let rx_pin = gpio0_pins.p0_0.into_af1();
     let tx_pin = gpio0_pins.p0_1.into_af1();
-    let console = hal::uart::UartPeripheral::uart0(
+    let mut rw = hal::uart::UartPeripheral::uart0(
         unsafe { mem::transmute_copy(uart0) },
         &mut gcr.reg,
         rx_pin,
@@ -103,9 +101,6 @@ fn main() -> ! {
         .build();
 
     let mut subscriptions: Vec<AlignedVec> = Vec::new();
-
-    #[allow(static_mut_refs)]
-    let rw = unsafe { RW = Some(console); RW.as_mut().unwrap_unchecked() };
 
     let mut most_recent_timestamp: Option<u64> = None;
     
@@ -131,7 +126,7 @@ fn main() -> ! {
                     }
 
                     rw.write_header(Opcode::LIST, res.len() as u16);
-                    let mut body_rw = BodyRW::new(header.opcode.should_ack(), rw, None);
+                    let mut body_rw = BodyRW::new(header.opcode.should_ack(), &mut rw, None);
                     body_rw.write_bytes(&res);
                     body_rw.finish_write();
                 },
@@ -140,7 +135,7 @@ fn main() -> ! {
                 }
             }
         } else {
-            let mut body_rw = BodyRW::new(header.opcode.should_ack(), rw, Some(p.dma.ch(0)));
+            let mut body_rw = BodyRW::new(header.opcode.should_ack(), &mut rw, Some(p.dma.ch(0)));
             let mut packet = body_rw.start_dma_read(header.length as usize);
 
             match header.opcode {
@@ -185,10 +180,22 @@ fn main() -> ! {
                     // Wait for header
                     while body_rw.dma_poll_for_ack() < header_size { }
 
-                    for subscription in &mut subscriptions {
-                        let (subscription_header, subscription_keys) = access_subscription(subscription);
-                        key = subscription_header.key_for_frame(&encoded_frame.header, subscription_keys);
-                        if key.is_some() { break; }
+                    if encoded_frame.header.channel != 0 {
+                        for subscription in &mut subscriptions {
+                            let (subscription_header, subscription_keys) = access_subscription(subscription);
+                            key = subscription_header.key_for_frame(&encoded_frame.header, subscription_keys);
+                            if key.is_some() { break; }
+                        }
+                    } else {
+                        // Dummy header so we can use the same subscription key for frame code
+                        let subscription_header = ArchivedSubscriptionDataHeader {
+                            start_timestamp: 0.into(),
+                            end_timestamp: u64::MAX.into(),
+                            channel: 0.into(),
+                            mac_hash: [0; 32]
+                        };
+
+                        key = subscription_header.key_for_frame(&encoded_frame.header, CHANNEL_0_KEYS);
                     }
 
                     if let Some(key) = key {
@@ -233,42 +240,6 @@ fn main() -> ! {
                     // TODO undefined behavior
                 }
             }
-
-            // let res = match header.opcode {
-            //     Opcode::DECODE => { 
-            //         let header = rw.read_body();
-            //         let key = get_key(&header);
-
-            //         let frame = rw.decode_off_wire(key);
-
-            //         // Makes sure timestamp is valid and globally increasing
-            //         if most_recent_timestamp.map(|t| header.timestamp <= t).unwrap_or(false) {
-            //             ReadResult::FrameDecodeError
-            //         } else {
-            //             // Make sure the hash of our frame data equals the mac_hash in the packet header
-            //             if let Some(frame) = frame {
-            //                 let mut hasher: Sha256 = Digest::new();
-            //                 hasher.update(frame.0);
-            //                 if <[u8; 32]>::from(hasher.finalize())[..16] == header.mac_hash {
-            //                     *most_recent_timestamp = Some(header.timestamp);
-            //                     ReadResult::DecodedFrame(DecodedFrame { header, frame })
-            //                 } else {
-            //                     ReadResult::FrameDecodeError
-            //                 }
-            //             } else {
-            //                 ReadResult::FrameDecodeError
-            //             }
-            //         }
-            //     }
-            //     Opcode::SUBSCRIBE => { 
-            //         let packet_len = header.length as usize;
-            //         let header = rw.read_body();
-            //         let keys = rw.read_vector_body(packet_len);
-
-            //         ReadResult::Packet(Packet::SubscriptionCommand(SubscriptionData { header, keys }))
-            //     }
-            //     _ => { return ReadResult::UnexpectedPacket; }
-            // };
         }
     }
 }

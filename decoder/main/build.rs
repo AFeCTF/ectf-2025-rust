@@ -16,6 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use libectf::key::Key;
+use libectf::subscription::SubscriptionData;
 use quote::quote;
 
 const DEFAULT_DECODER_ID: u32 = 0xdeadbeef;
@@ -36,11 +37,28 @@ fn main() -> anyhow::Result<()> {
 
     let decoder_key = Key::for_device(decoder_id, &secrets).0;
 
+    let s = SubscriptionData::generate(&secrets, 0, u64::MAX, 0, decoder_id);
+
+    let keys_code = s.keys.iter().map(|k| {
+        let mask_idx = k.mask_idx;
+        let key = k.key.0;
+
+        quote! { 
+            ArchivedEncodedSubscriptionKey {
+                mask_idx: #mask_idx,
+                key: ArchivedKey([#(#key),*])
+            } 
+        }
+    });
+
+
     let code = quote! {
         #![allow(dead_code)]
-        use libectf::key::Key;
+        use libectf::key::{ArchivedKey, Key};
+        use libectf::subscription::ArchivedEncodedSubscriptionKey;
         pub static DECODER_ID: u32 = #decoder_id;
         pub static DECODER_KEY: Key = Key([#(#decoder_key),*]);
+        pub static CHANNEL_0_KEYS: &[ArchivedEncodedSubscriptionKey] = &[#(#keys_code),*];
     };
 
     let dest_path = Path::new("src/keys.rs");

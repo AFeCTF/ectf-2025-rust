@@ -5,7 +5,7 @@ use cipher::{generic_array::GenericArray, BlockDecryptMut, BlockEncryptMut, KeyI
 use rkyv::{Archive, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::frame::{ArchivedFrame, Frame, FRAME_SIZE};
+use crate::frame::{Frame, FRAME_SIZE};
 
 /// 64-bit key that is extended with zeros to form an AES128 key
 #[derive(Archive, Serialize, Deserialize)]
