@@ -1,6 +1,5 @@
-use alloc::{string::String, vec::Vec};
 use max7800x_hal::pac::dma;
-use rkyv::{api::high::HighSerializer, ser::allocator::ArenaHandle, util::AlignedVec, Serialize};
+use rkyv::util::AlignedVec;
 
 use crate::UART0;
 
@@ -34,6 +33,7 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         self.dma_read_length = length;
         self.last_ack_write = 0;
 
+        #[allow(static_mut_refs)]
         let uart0 = unsafe { UART0.as_mut().unwrap() };
         let dma = self.dma.unwrap();
 
@@ -111,10 +111,6 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         bytes_read
     }
 
-    pub fn reset_cursor(&mut self) {
-        self.cursor = 0;
-    }
-
     pub fn write_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.rw.write_u8(*byte);
@@ -122,86 +118,6 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
             if self.cursor % Self::CHUNK_SIZE == 0 {
                 self.rw.wait_for_ack();
             }
-        }
-    }
-
-    /// Writes encodable data, waiting for ACKs when required.
-    pub fn write_body<E: rkyv::rancor::Source>(&mut self, body: &impl for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, E>>) {
-        let res = rkyv::to_bytes(body).unwrap();
-        self.write_bytes(&res);
-    }
-
-    /// Writes a vector of encodable data, this is equivalent to writing each element
-    /// sequentially. NOTE: The length of the vector is stored nowhere, it is the 
-    /// responsibility of the programmer to store it some other way and pass it to the
-    /// [`read_vector_body`] function on the receiving end.
-    pub fn write_vector_body<E: rkyv::rancor::Source>(&mut self, body: &Vec<impl for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, E>>>) {
-        for entry in body {
-            self.write_body(entry);
-        }
-    }
-
-    /// Writes a string. NOTE: The length of the string is stored nowhere, it is the 
-    /// responsibility of the programmer to store it some other way and pass it to the
-    /// [`read_string_body`] function on the receiving end.
-    pub fn write_string_body(&mut self, body: &String) {
-        self.write_bytes(body.as_bytes());
-    }
-
-    // /// Reads encodable data, waiting for ACKs when required.
-    // pub fn read_body<T: Decode>(&mut self) -> T {
-    //     bincode::decode_from_reader(self, BINCODE_CONFIG).unwrap()
-    // }
-
-    // /// Reads a vector of decodable data. Until [`length`] bytes have been read.
-    // pub fn read_vector_body<T: Decode>(&mut self, length: usize) -> Vec<T> {
-    //     let mut res = Vec::new();
-
-    //     while self.cursor < length {
-    //         res.push(bincode::decode_from_reader(&mut *self, BINCODE_CONFIG).unwrap());
-    //     }
-    //     
-    //     res
-    // }
-
-    // /// Reads a string. This is not used on the decoder so it is commented out.
-    // // pub fn read_string_body(&mut self, length: usize) -> String {
-    // //     let mut res: Vec<u8> = Vec::with_capacity(length);
-    // //     self.read(res.as_mut_slice()).unwrap();
-    // //     String::from_utf8_lossy(res.as_slice()).to_string()
-    // // }
-
-    /// Decodes a frame off the wire. This function is intended to be called once 
-    /// the header of the encoded frame has already been read, and will read frames
-    /// one at a time and decode the proper frame with [`key`] (if one is provided).
-    // pub(super) fn decode_off_wire(&mut self, key: Option<&EncodedSubscriptionKey>) -> Option<Frame> {
-    //     let mut res: Option<Frame> = None;
-
-    //     if let Some(key) = key {
-    //         for idx in 0..NUM_ENCRYPTED_FRAMES {
-    //             let f: Frame = self.read_body();
-    //             if idx == key.mask_idx as usize {
-    //                 res = Some(f);
-    //             }
-    //         }
-    //         
-    //         if let Some(f) = res.as_mut() {
-    //             key.key.cipher().decode_frame(f);
-    //         }
-    //     } else {
-    //         // Throw all frames away
-    //         for _ in 0..NUM_ENCRYPTED_FRAMES {
-    //             let _: Frame = self.read_body();
-    //         }
-    //     }
-    //     
-    //     res
-    // }
-
-    /// Write the final ACK once an entire packet has been recieved.
-    pub fn finish_read(&mut self) {
-        if self.should_ack && self.cursor % Self::CHUNK_SIZE != 0 {
-            self.rw.write_ack();
         }
     }
 

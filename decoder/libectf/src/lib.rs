@@ -1,3 +1,5 @@
+#![feature(inherent_str_constructors)]
+
 #![cfg_attr(not(test), no_std)]
 
 #[cfg(test)] extern crate std;

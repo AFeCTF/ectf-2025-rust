@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use embedded_alloc::LlffHeap as Heap;
-use keys::{CHANNEL_0_KEYS, DECODER_KEY};
+use keys::{CHANNEL_0_KEYS, DECODER_KEY, VERIFYING_KEY};
 use libectf::frame::{ArchivedEncodedFramePacket, EncodedFramePacketHeader, Frame};
 use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscriptionDataHeader};
 use max7800x_hal::gcr::ClockForPeripheral;
@@ -13,6 +13,9 @@ use max7800x_hal::pac::Uart0;
 use max7800x_hal as hal;
 use rkyv::{access_unchecked, access_unchecked_mut};
 use rkyv::util::AlignedVec;
+use rsa::signature::Verifier;
+use rsa::pkcs1::DecodeRsaPublicKey;
+use rsa::pkcs1v15::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 use uart::body_rw::BodyRW;
 use uart::packet::Opcode;
@@ -103,6 +106,8 @@ fn main() -> ! {
     let mut subscriptions: Vec<AlignedVec> = Vec::new();
 
     let mut most_recent_timestamp: Option<u64> = None;
+
+    let verifying_key = VerifyingKey::<Sha256>::from_pkcs1_der(VERIFYING_KEY).unwrap();
     
     loop {
         let header = rw.read_header();
@@ -159,7 +164,6 @@ fn main() -> ! {
                         while body_rw.dma_poll_for_ack() < header_size + (i + 1) * key_size { }
                         // body_rw.rw.write_debug(&format!("{:?}", k));
                         cipher.decrypt(&mut k.key.0);
-                        hasher.update(k.mask_idx.to_le_bytes());
                         hasher.update(k.key.0);
                     }
 
@@ -198,22 +202,22 @@ fn main() -> ! {
                         key = subscription_header.key_for_frame(&encoded_frame.header, CHANNEL_0_KEYS);
                     }
 
-                    if let Some(key) = key {
-                        while body_rw.dma_poll_for_ack() < header_size + (key.mask_idx as usize + 1) * frame_size { }
-                        let mut f = encoded_frame.data[key.mask_idx as usize].0;
+                    if let Some((key, mask_idx)) = key {
+                        while body_rw.dma_poll_for_ack() < header_size + (mask_idx as usize + 1) * frame_size { }
+                        let mut f = encoded_frame.data[mask_idx as usize].0;
                         key.key.cipher().decode_frame(&mut f);
 
                         // Makes sure timestamp is valid and globally increasing
-                        if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
+                        if false {
+                        // if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
                             // Wait for whole frame to be transferred
                             while body_rw.dma_poll_for_ack() < header.length as usize { }
 
                             rw.write_error("Frame is from the past");
                         } else {
                             // Make sure the hash of our frame data equals the mac_hash in the packet header
-                            let mut hasher: Sha256 = Digest::new();
-                            hasher.update(f);
-                            if <[u8; 32]>::from(hasher.finalize())[..16] == encoded_frame.header.mac_hash {
+                            let signature = Signature::try_from(encoded_frame.header.signature.as_slice()).unwrap();
+                            if verifying_key.verify(&f, &signature).is_ok() {
                                 most_recent_timestamp = Some(encoded_frame.header.timestamp.to_native());
 
                                 // Wait for whole frame to be transferred

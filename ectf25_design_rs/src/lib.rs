@@ -1,6 +1,7 @@
 use libectf::{frame::Frame, subscription::SubscriptionData};
 use pyo3::prelude::*;
-use rand::{rngs::OsRng, TryRngCore};
+use rand::rngs::OsRng;
+use rsa::{pkcs1::EncodeRsaPrivateKey, pkcs1v15::SigningKey, sha2::Sha256, RsaPrivateKey};
 
 #[pyclass]
 struct Encoder {
@@ -36,9 +37,9 @@ fn gen_subscription(secrets: Vec<u8>, device_id: u32, start: u64, end: u64, chan
 #[pyfunction]
 #[allow(unused_variables)]
 fn gen_secrets(channels: Vec<u32>) -> Vec<u8> {
-    let mut secrets = [0u8; 32];
-    OsRng.try_fill_bytes(&mut secrets).unwrap();
-    secrets.to_vec()
+    let private_key = RsaPrivateKey::new(&mut OsRng, 512).unwrap();
+    let signing_key = SigningKey::<Sha256>::new(private_key);
+    signing_key.to_pkcs1_der().unwrap().as_bytes().to_vec()
 }
 
 #[pymodule]

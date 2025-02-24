@@ -18,6 +18,10 @@ use std::path::{Path, PathBuf};
 use libectf::key::Key;
 use libectf::subscription::SubscriptionData;
 use quote::quote;
+use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPublicKey};
+use rsa::pkcs1v15::SigningKey;
+use rsa::sha2::Sha256;
+use rsa::signature::Keypair;
 
 const DEFAULT_DECODER_ID: u32 = 0xdeadbeef;
 const SECRETS_PATH: &str = "../../secrets";
@@ -40,17 +44,17 @@ fn main() -> anyhow::Result<()> {
     let s = SubscriptionData::generate(&secrets, 0, u64::MAX, 0, decoder_id);
 
     let keys_code = s.keys.iter().map(|k| {
-        let mask_idx = k.mask_idx;
         let key = k.key.0;
 
         quote! { 
             ArchivedEncodedSubscriptionKey {
-                mask_idx: #mask_idx,
                 key: ArchivedKey([#(#key),*])
             } 
         }
     });
 
+    let verifying_key = SigningKey::<Sha256>::from_pkcs1_der(&secrets).unwrap().verifying_key().to_pkcs1_der().unwrap();
+    let verifying_key_bytes = verifying_key.as_bytes();
 
     let code = quote! {
         #![allow(dead_code)]
@@ -59,6 +63,7 @@ fn main() -> anyhow::Result<()> {
         pub static DECODER_ID: u32 = #decoder_id;
         pub static DECODER_KEY: Key = Key([#(#decoder_key),*]);
         pub static CHANNEL_0_KEYS: &[ArchivedEncodedSubscriptionKey] = &[#(#keys_code),*];
+        pub static VERIFYING_KEY: &[u8] = &[#(#verifying_key_bytes),*];
     };
 
     let dest_path = Path::new("src/keys.rs");

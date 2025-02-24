@@ -28,7 +28,7 @@ pub struct SubscriptionDataHeader {
     pub end_timestamp: u64,
     pub channel: u32,
     /// SHA256 of the entire contents of the subscription data packet. Calculated like this:
-    /// `SHA256(start_timestamp, end_timestamp, channel, {mask_idx, UNENCRYPTED_KEY} for each key)`
+    /// `SHA256(start_timestamp, end_timestamp, channel, UNENCRYPTED_KEY for each key)`
     pub mac_hash: [u8; 32]
 }
 
@@ -37,7 +37,6 @@ pub struct SubscriptionDataHeader {
 #[derive(Debug, Archive, Serialize, Deserialize)]
 #[rkyv(derive(Debug))]
 pub struct EncodedSubscriptionKey {
-    pub mask_idx: u8,
     pub key: Key
 }
 
@@ -48,18 +47,16 @@ impl ArchivedSubscriptionDataHeader {
     }
 
     /// Finds a key we can use to decode a frame.
-    pub fn key_for_frame<'k>(&self, header: &ArchivedEncodedFramePacketHeader, keys: &'k [ArchivedEncodedSubscriptionKey]) -> Option<&'k ArchivedEncodedSubscriptionKey> {
+    pub fn key_for_frame<'k>(&self, header: &ArchivedEncodedFramePacketHeader, keys: &'k [ArchivedEncodedSubscriptionKey]) -> Option<(&'k ArchivedEncodedSubscriptionKey, u8)> {
         if !self.contains_frame(header) {
             return None;
         }
 
-        let mut start_timestamp = self.start_timestamp;
-        for key in keys.iter() {
-            let mask = MASKS[key.mask_idx as usize];
+        for (key, (start_timestamp, mask_idx)) in keys.iter().zip(characterize_range(self.start_timestamp.to_native(), self.end_timestamp.to_native()).into_iter()) {
+            let mask = MASKS[mask_idx as usize];
             if (start_timestamp ^ header.timestamp) >> mask == 0 {
-                return Some(key);
+                return Some((key, mask_idx));
             }
-            start_timestamp += 1 << mask;
         }
 
         None
@@ -67,7 +64,6 @@ impl ArchivedSubscriptionDataHeader {
 }
 
 impl ArchivedSubscriptionData {
-
     /// Decrypt the subscription keys using the device_key and validate that the mac_hash matches
     /// the hash of our decrypted data.
     pub fn authenticate(&self, device_key: &Key) -> bool {
@@ -79,11 +75,10 @@ impl ArchivedSubscriptionData {
         let mut cipher = device_key.cipher();
 
         let mut buf = [0u8; 8];
-
-        for k in self.keys.iter() {
+        
+        for (k, _) in self.keys.iter().zip(characterize_range(self.header.start_timestamp.to_native(), self.header.end_timestamp.to_native()).into_iter()) {
             buf.copy_from_slice(&k.key.0);
             cipher.decrypt(&mut buf);
-            hasher.update(k.mask_idx.to_le_bytes());
             hasher.update(k.key.0);
         }
 
@@ -106,13 +101,11 @@ impl SubscriptionData {
         let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
             let mut key = Key::for_bitrange(t, mask_idx, channel, secrets);
 
-            hasher.update(mask_idx.to_le_bytes());
             hasher.update(key.0);
 
             device_key_cipher.encrypt(&mut key.0);
 
             EncodedSubscriptionKey {
-                mask_idx,
                 key 
             }
         }).collect();

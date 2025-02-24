@@ -1,16 +1,8 @@
 use core::ops::Deref;
 
-use libectf::frame::{EncodedFramePacketHeader, Frame};
 use max7800x_hal::{pac, uart::BuiltUartPeripheral};
 
 use super::packet::{MessageHeader, Opcode, MAGIC};
-
-/// A decoded frame, along with the header of the encoded frame it came from.
-pub struct DecodedFrame {
-    #[allow(dead_code)]  // TODO do we need this or is just a waste of memory?
-    pub header: EncodedFramePacketHeader,
-    pub frame: Frame
-}
 
 impl<UART, RX, TX, CTS, RTS> RawRW for BuiltUartPeripheral<UART, RX, TX, CTS, RTS>
 where
@@ -55,14 +47,6 @@ pub trait RawRW: Sized + embedded_io::Read + embedded_io::Write {
         self.write_all(&data.to_le_bytes()).unwrap();
     }
 
-    fn write_u32(&mut self, data: u32) {
-        self.write_all(&data.to_le_bytes()).unwrap();
-    }
-
-    fn write_u64(&mut self, data: u64) {
-        self.write_all(&data.to_le_bytes()).unwrap();
-    }
-
     /// Reads a packet header.
     fn read_header(&mut self) -> MessageHeader {
         // Block until we get the magic character
@@ -93,6 +77,7 @@ pub trait RawRW: Sized + embedded_io::Read + embedded_io::Write {
         self.write_u16(length);
     }
 
+    #[allow(dead_code)]
     fn write_debug(&mut self, msg: &str) {
         self.write_header(Opcode::DEBUG, msg.len() as u16);
         for b in msg.as_bytes() {

@@ -1,7 +1,10 @@
-use core::{fmt::Debug, mem::MaybeUninit, str};
+use core::{fmt::Debug, mem::MaybeUninit};
 
 use rkyv::{Archive, Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use rsa::{pkcs1::DecodeRsaPrivateKey, pkcs1v15::SigningKey, signature::SignerMut};
+
+use alloc::boxed::Box;
+use sha2::Sha256;
 
 use crate::{key::Key, masks::MASKS};
 
@@ -16,10 +19,9 @@ pub struct Frame(pub [u8; FRAME_SIZE]);
 
 #[derive(Debug, Archive, Serialize, Deserialize)]
 pub struct EncodedFramePacketHeader {
-    pub channel: u32,
     pub timestamp: u64,
-    /// Upper half of the SHA256 of the frame that was encoded.
-    pub mac_hash: [u8; 16]
+    pub channel: u32,
+    pub signature: [u8; 64]
 }
 
 /// Encoded frame packet that is sent to the decoder.
@@ -31,8 +33,8 @@ pub struct EncodedFramePacket {
 
 impl Frame {
     pub fn encode(&self, timestamp: u64, channel: u32, secrets: &[u8]) -> EncodedFramePacket {
-        let mut hasher: Sha256 = Digest::new();
-        hasher.update(&self.0);
+        let mut signing_key = SigningKey::<Sha256>::from_pkcs1_der(secrets).unwrap();
+        let signature: Box<[u8]> = signing_key.sign(&self.0).try_into().unwrap();
 
         // I wish there was an easier way to do this without making Frame implement copy, but all
         // this code does is copy our frame into an array with size NUM_ENCRYPTED_FRAMES.
@@ -53,7 +55,7 @@ impl Frame {
             header: EncodedFramePacketHeader {
                 channel,
                 timestamp,
-                mac_hash: <[u8; 32]>::from(hasher.finalize())[..16].try_into().unwrap()
+                signature: signature.to_vec().try_into().unwrap()
             },
             data,
         }
