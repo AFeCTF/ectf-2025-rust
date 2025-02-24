@@ -7,10 +7,12 @@ use sha2::{Digest, Sha256};
 
 use crate::frame::{Frame, FRAME_SIZE};
 
-/// 64-bit key that is extended with zeros to form an AES128 key
-#[derive(Archive, Serialize, Deserialize)]
+pub const KEY_SIZE_BYTES: usize = 12;
+
+/// 96-bit key that is extended with zeros to form an AES128 key
+#[derive(Archive, Serialize, Deserialize, Clone)]
 #[rkyv(derive(Debug))]
-pub struct Key(pub [u8; 8]);
+pub struct Key(pub [u8; KEY_SIZE_BYTES]);
 
 /// Used to encrypt and decrypt data. Generated from a [`Key`].
 pub struct Cipher(Aes128);
@@ -24,7 +26,7 @@ impl ArchivedKey {
     /// Create an AES128 key from this key.
     fn to_aes_key(&self) -> GenericArray<u8, <Aes128 as KeySizeUser>::KeySize> {
         let mut data = [0u8; 16];
-        data[..8].copy_from_slice(&self.0);
+        data[..KEY_SIZE_BYTES].copy_from_slice(&self.0);
         data.into()
     }
 }
@@ -38,7 +40,7 @@ impl Key {
     /// Create an AES128 key from this key.
     fn to_aes_key(&self) -> GenericArray<u8, <Aes128 as KeySizeUser>::KeySize> {
         let mut data = [0u8; 16];
-        data[..8].copy_from_slice(&self.0);
+        data[..KEY_SIZE_BYTES].copy_from_slice(&self.0);
         data.into()
     }
 
@@ -48,7 +50,7 @@ impl Key {
         hasher.update(secrets);
         hasher.update(device_id.to_le_bytes());
         let hash: [u8; 32] = hasher.finalize().into();
-        Key(hash[..8].try_into().unwrap())
+        Key(hash[..KEY_SIZE_BYTES].try_into().unwrap())
     }
 
     /// Generate a subscripton key for a bitrange.
@@ -59,7 +61,17 @@ impl Key {
         hasher.update(mask_idx.to_le_bytes());
         hasher.update(channel.to_le_bytes());
         let hash: [u8; 32] = hasher.finalize().into();
-        Key(hash[..8].try_into().unwrap())
+        Key(hash[..KEY_SIZE_BYTES].try_into().unwrap())
+    }
+
+    /// Generate a subscripton key for a bitrange.
+    pub fn for_frame(timestamp: u64, channel: u32, secrets: &[u8]) -> Key {
+        let mut hasher: Sha256 = Digest::new();
+        hasher.update(secrets);
+        hasher.update(timestamp.to_le_bytes());
+        hasher.update(channel.to_le_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        Key(hash[..KEY_SIZE_BYTES].try_into().unwrap())
     }
 }
 

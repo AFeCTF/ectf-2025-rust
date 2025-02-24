@@ -6,7 +6,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 use embedded_alloc::LlffHeap as Heap;
 use keys::{CHANNEL_0_KEYS, DECODER_KEY, VERIFYING_KEY};
-use libectf::frame::{ArchivedEncodedFramePacket, EncodedFramePacketHeader, Frame};
+use libectf::frame::{ArchivedEncodedFramePacket, ArchivedEncodedFramePacketHeader};
+use libectf::key::Key;
 use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscriptionDataHeader};
 use max7800x_hal::gcr::ClockForPeripheral;
 use max7800x_hal::pac::Uart0;
@@ -175,8 +176,8 @@ fn main() -> ! {
                     }
                 }
                 Opcode::DECODE => {
-                    let header_size = mem::size_of::<EncodedFramePacketHeader>();
-                    let frame_size = mem::size_of::<Frame>();
+                    let header_size = mem::size_of::<ArchivedEncodedFramePacketHeader>();
+                    // let key_size = mem::size_of::<ArchivedKey>();
                     let encoded_frame = unsafe { access_unchecked_mut::<ArchivedEncodedFramePacket>(&mut packet) };
 
                     let mut key = None;
@@ -202,17 +203,17 @@ fn main() -> ! {
                         key = subscription_header.key_for_frame(&encoded_frame.header, CHANNEL_0_KEYS);
                     }
 
+                    // Wait for whole frame to be transferred
+                    while body_rw.dma_poll_for_ack() < header.length as usize { }
+                    
                     if let Some((key, mask_idx)) = key {
-                        while body_rw.dma_poll_for_ack() < header_size + (mask_idx as usize + 1) * frame_size { }
-                        let mut f = encoded_frame.data[mask_idx as usize].0;
-                        key.key.cipher().decode_frame(&mut f);
+                        let mut frame_key = encoded_frame.keys[mask_idx as usize].0;
+                        key.key.cipher().decrypt(&mut frame_key);
+                        let mut f = encoded_frame.frame.0;
+                        Key(frame_key).cipher().decrypt(&mut f);
 
                         // Makes sure timestamp is valid and globally increasing
-                        if false {
-                        // if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
-                            // Wait for whole frame to be transferred
-                            while body_rw.dma_poll_for_ack() < header.length as usize { }
-
+                        if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
                             rw.write_error("Frame is from the past");
                         } else {
                             // Make sure the hash of our frame data equals the mac_hash in the packet header
@@ -220,23 +221,14 @@ fn main() -> ! {
                             if verifying_key.verify(&f, &signature).is_ok() {
                                 most_recent_timestamp = Some(encoded_frame.header.timestamp.to_native());
 
-                                // Wait for whole frame to be transferred
-                                while body_rw.dma_poll_for_ack() < header.length as usize { }
-
                                 // Write decode response
                                 rw.write_header(Opcode::DECODE, f.len() as u16);
                                 rw.write_bytes(&f);
                             } else {
-                                // Wait for whole frame to be transferred
-                                while body_rw.dma_poll_for_ack() < header.length as usize { }
-
                                 rw.write_error("Frame validation failed");
                             }
                         }
                     } else {
-                        // Wait for whole frame to be transferred
-                        while body_rw.dma_poll_for_ack() < header.length as usize { }
-
                         rw.write_error("No frame for subscription");
                     }
                 }
