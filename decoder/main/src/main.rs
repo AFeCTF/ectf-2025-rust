@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use embedded_alloc::LlffHeap as Heap;
 use keys::{CHANNEL_0_KEYS, DECODER_KEY, VERIFYING_KEY};
 use libectf::frame::{ArchivedEncodedFramePacket, ArchivedEncodedFramePacketHeader};
-use libectf::key::Key;
+use libectf::key::{ArchivedKey, Key};
 use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscriptionDataHeader};
 use max7800x_hal::gcr::ClockForPeripheral;
 use max7800x_hal::pac::Uart0;
@@ -163,6 +163,7 @@ fn main() -> ! {
                     for (i, k) in subscription_keys.iter_mut().enumerate() {
                         // Wait till we have valid key
                         while body_rw.dma_poll_for_ack() < header_size + (i + 1) * key_size { }
+
                         // body_rw.rw.write_debug(&format!("{:?}", k));
                         cipher.decrypt(&mut k.key.0);
                         hasher.update(k.key.0);
@@ -177,7 +178,7 @@ fn main() -> ! {
                 }
                 Opcode::DECODE => {
                     let header_size = mem::size_of::<ArchivedEncodedFramePacketHeader>();
-                    // let key_size = mem::size_of::<ArchivedKey>();
+                    let key_size = mem::size_of::<ArchivedKey>();
                     let encoded_frame = unsafe { access_unchecked_mut::<ArchivedEncodedFramePacket>(&mut packet) };
 
                     let mut key = None;
@@ -202,18 +203,21 @@ fn main() -> ! {
 
                         key = subscription_header.key_for_frame(&encoded_frame.header, CHANNEL_0_KEYS);
                     }
-
-                    // Wait for whole frame to be transferred
-                    while body_rw.dma_poll_for_ack() < header.length as usize { }
                     
                     if let Some((key, mask_idx)) = key {
+                        // Wait for the key to be transferred
+                        while body_rw.dma_poll_for_ack() < header_size + (mask_idx as usize + 1) * key_size { }
+
                         let mut frame_key = encoded_frame.keys[mask_idx as usize].0;
                         key.key.cipher().decrypt(&mut frame_key);
-                        let mut f = encoded_frame.frame.0;
+                        let mut f = encoded_frame.header.frame.0;
                         Key(frame_key).cipher().decrypt(&mut f);
 
                         // Makes sure timestamp is valid and globally increasing
                         if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
+                            // Wait until the whole message is transferred
+                            while body_rw.dma_poll_for_ack() < header.length as usize { }
+
                             rw.write_error("Frame is from the past");
                         } else {
                             // Make sure the hash of our frame data equals the mac_hash in the packet header
@@ -221,14 +225,23 @@ fn main() -> ! {
                             if verifying_key.verify(&f, &signature).is_ok() {
                                 most_recent_timestamp = Some(encoded_frame.header.timestamp.to_native());
 
+                                // Wait until the whole message is transferred
+                                while body_rw.dma_poll_for_ack() < header.length as usize { }
+
                                 // Write decode response
                                 rw.write_header(Opcode::DECODE, f.len() as u16);
                                 rw.write_bytes(&f);
                             } else {
+                                // Wait until the whole message is transferred
+                                while body_rw.dma_poll_for_ack() < header.length as usize { }
+
                                 rw.write_error("Frame validation failed");
                             }
                         }
                     } else {
+                        // Wait until the whole message is transferred
+                        while body_rw.dma_poll_for_ack() < header.length as usize { }
+
                         rw.write_error("No frame for subscription");
                     }
                 }

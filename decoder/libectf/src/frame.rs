@@ -21,7 +21,8 @@ pub struct Frame(pub [u8; FRAME_SIZE]);
 pub struct EncodedFramePacketHeader {
     pub timestamp: u64,
     pub channel: u32,
-    pub signature: [u8; 64]
+    pub signature: [u8; 64],
+    pub frame: Frame,
 }
 
 /// Encoded frame packet that is sent to the decoder.
@@ -29,7 +30,6 @@ pub struct EncodedFramePacketHeader {
 pub struct EncodedFramePacket {
     pub header: EncodedFramePacketHeader,
     pub keys: [Key; NUM_ENCRYPTED_KEYS],
-    pub frame: Frame
 }
 
 impl Frame {
@@ -60,10 +60,10 @@ impl Frame {
             header: EncodedFramePacketHeader {
                 channel,
                 timestamp,
-                signature: signature.to_vec().try_into().unwrap()
+                signature: signature.to_vec().try_into().unwrap(),
+                frame: encrypted_frame
             },
             keys: data,
-            frame: encrypted_frame
         }
     }
 }
