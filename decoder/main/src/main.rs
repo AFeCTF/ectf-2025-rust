@@ -242,7 +242,7 @@ fn main() -> ! {
                         // Wait until the whole message is transferred
                         while body_rw.dma_poll_for_ack() < header.length as usize { }
 
-                        rw.write_error("No frame for subscription");
+                        rw.write_error("No subscription for frame");
                     }
                 }
                 _ => {
