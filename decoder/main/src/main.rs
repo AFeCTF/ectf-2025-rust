@@ -200,8 +200,7 @@ fn main() -> ! {
                             Key(frame_key).cipher().decrypt(&mut f);
 
                             // Makes sure timestamp is valid and globally increasing
-                            if false {
-                            // if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
+                            if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
                                 // Wait until the whole message is transferred
                                 while body_rw.dma_poll_for_ack() < header.length as usize { }
 
@@ -235,7 +234,7 @@ fn main() -> ! {
                             // Wait until the whole message is transferred
                             while body_rw.dma_poll_for_ack() < header.length as usize { }
 
-                            rw.write_error("No frame for subscription");
+                            rw.write_error("No subscription for frame");
                         }
                     }
                 }
