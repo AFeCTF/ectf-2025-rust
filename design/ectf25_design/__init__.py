@@ -26,16 +26,16 @@ if spec is None or spec.loader is None:
     if PLATFORM_TAG == "unknown":
         raise RuntimeError(f"Unsupported platform: {SYSTEM_PLATFORM} ({ARCH})")
 
-    # Locate wheel files
-    WHEEL_DIR = os.path.abspath(os.path.join(os.getcwd(), "./ectf25_design_rs/wheels"))
-    whl_candidates = glob.glob(os.path.join(WHEEL_DIR, "ectf25_design_rs-*.whl"))
-
     # Match Python version, platform, and architecture
     valid_wheel = None
-    for whl in whl_candidates:
-        if PY_VERSION in whl and PLATFORM_TAG in whl:
-            valid_wheel = whl
-            break
+    for dir in ["./ectf25_design_rs/wheels", "/workdir/ectf25_design_rs/wheels"]:
+        WHEEL_DIR = os.path.abspath(os.path.join(os.getcwd(), dir))
+        whl_candidates = glob.glob(os.path.join(WHEEL_DIR, "ectf25_design_rs-*.whl"))
+
+        for whl in whl_candidates:
+            if PY_VERSION in whl and PLATFORM_TAG in whl:
+                valid_wheel = whl
+                break
 
     if not valid_wheel:
         raise FileNotFoundError(f"No compatible wheel found in {WHEEL_DIR} for {PY_VERSION} on {PLATFORM_TAG}")
