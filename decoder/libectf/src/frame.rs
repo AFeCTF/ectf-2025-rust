@@ -43,16 +43,12 @@ impl Frame {
 
         // I wish there was an easier way to do this without making Key implement copy, but all
         // this code does is copy our frame key into an array with size NUM_ENCRYPTED_KEYS.
-        let mut data: [MaybeUninit<Key>; NUM_ENCRYPTED_KEYS] = unsafe { MaybeUninit::uninit().assume_init() };
-        for elem in &mut data {
-            *elem = MaybeUninit::new(frame_key.clone());
-        }
-        let mut data: [Key; NUM_ENCRYPTED_KEYS] = unsafe { core::mem::transmute(data) };
+        let mut data: [Key; NUM_ENCRYPTED_KEYS] = core::array::from_fn(|_| frame_key.clone());
 
         // Loop through every possible mask and encrypt the frame with the key for the bitrange
         // that contains this frame.
         for (mask_idx, mask) in MASKS.iter().enumerate() {
-            let key = Key::for_bitrange(timestamp & !((1 << mask) - 1), mask_idx as u8, channel, secrets);
+            let key = Key::for_bitrange(timestamp & !((1 << *mask as u64) - 1), mask_idx as u8, channel, secrets);
             key.cipher().encrypt(&mut data[mask_idx].0);
         }
 

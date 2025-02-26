@@ -23,7 +23,7 @@ impl Encoder {
 
 #[pyfunction]
 fn gen_subscription(secrets: Vec<u8>, device_id: u32, start: u64, end: u64, channel: u32) -> Vec<u8> {
-    let data = SubscriptionData::generate(secrets.as_slice(), start, end, channel, device_id);
+    let data = SubscriptionData::generate(secrets.as_slice(), start, end, channel, Some(device_id));
 
     let mut res = rkyv::to_bytes::<rkyv::rancor::Error>(&data.header).unwrap().into_vec();
     

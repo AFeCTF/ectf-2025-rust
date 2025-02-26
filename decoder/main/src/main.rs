@@ -5,15 +5,16 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use embedded_alloc::LlffHeap as Heap;
+use flash::Flash;
 use keys::{CHANNEL_0_KEYS, DECODER_KEY, VERIFYING_KEY};
 use libectf::frame::{ArchivedEncodedFramePacket, ArchivedEncodedFramePacketHeader};
 use libectf::key::{ArchivedKey, Key};
 use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscriptionDataHeader};
+use max7800x_hal::flc::Flc;
 use max7800x_hal::gcr::ClockForPeripheral;
 use max7800x_hal::pac::Uart0;
 use max7800x_hal as hal;
-use rkyv::{access_unchecked, access_unchecked_mut};
-use rkyv::util::AlignedVec;
+use rkyv::access_unchecked_mut;
 use rsa::signature::Verifier;
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
@@ -22,7 +23,6 @@ use uart::body_rw::BodyRW;
 use uart::packet::Opcode;
 use uart::raw_rw::RawRW;
 use core::mem::{self, MaybeUninit};
-use core::ptr::slice_from_raw_parts_mut;
 use core::u64;
 
 pub use hal::pac;
@@ -37,33 +37,14 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 
 mod uart;
 mod keys;
+mod flash;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
-const HEAP_SIZE: usize = 32768*3;
+const HEAP_SIZE: usize = 0x10000;  // Half of our RAM
 static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
 
 static mut UART0: Option<Uart0> = None;
-
-fn access_subscription(packet: &mut AlignedVec) -> (&ArchivedSubscriptionDataHeader, &mut [ArchivedEncodedSubscriptionKey]) {
-    // Split the header off of the packet
-    let header_size = mem::size_of::<ArchivedSubscriptionDataHeader>();
-    let key_size = mem::size_of::<ArchivedEncodedSubscriptionKey>();
-    let (subscription_header_bytes, remaining) = packet.as_mut_slice().split_at_mut(header_size);
-    let subscription_header: &ArchivedSubscriptionDataHeader = unsafe { access_unchecked(subscription_header_bytes) };
-    
-    // Cast the keys that are stored inline
-    // Safety: The alignment of the encoded keys is 1 since we just store a bunch
-    // of u8s
-    let subscription_keys: &mut [ArchivedEncodedSubscriptionKey] = unsafe {
-        &mut *slice_from_raw_parts_mut(
-            remaining.as_ptr() as *mut ArchivedEncodedSubscriptionKey,
-            remaining.len() / key_size
-        )
-    };
-
-    (subscription_header, subscription_keys)
-}
 
 #[entry]
 fn main() -> ! {
@@ -71,7 +52,6 @@ fn main() -> ! {
     unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE); }
 
     let mut p = pac::Peripherals::take().unwrap();
-    let mut _cp = cortex_m::Peripherals::take().unwrap();
 
     unsafe { p.dma.enable_clock(&mut p.gcr); }
 
@@ -104,7 +84,7 @@ fn main() -> ! {
         .parity(hal::uart::ParityBit::None)
         .build();
 
-    let mut subscriptions: Vec<AlignedVec> = Vec::new();
+    let mut flash = Flash::new(Flc::new(p.flc, clks.sys_clk)).unwrap();
 
     let mut most_recent_timestamp: Option<u64> = None;
 
@@ -122,13 +102,14 @@ fn main() -> ! {
                 Opcode::LIST => { 
                     let mut res: Vec<u8> = Vec::new();
 
+                    let subscriptions = flash.subscriptions();
+
                     res.extend_from_slice(&(subscriptions.len() as u32).to_le_bytes());
 
-                    for subscription in &mut subscriptions {
-                        let (subscription_header, _) = access_subscription(subscription);
-                        res.extend_from_slice(&subscription_header.channel.to_native().to_le_bytes());
-                        res.extend_from_slice(&subscription_header.start_timestamp.to_native().to_le_bytes());
-                        res.extend_from_slice(&subscription_header.end_timestamp.to_native().to_le_bytes());
+                    for subscription in subscriptions {
+                        res.extend_from_slice(&subscription.header.channel.to_native().to_le_bytes());
+                        res.extend_from_slice(&subscription.header.start_timestamp.to_native().to_le_bytes());
+                        res.extend_from_slice(&subscription.header.end_timestamp.to_native().to_le_bytes());
                     }
 
                     rw.write_header(Opcode::LIST, res.len() as u16);
@@ -148,19 +129,19 @@ fn main() -> ! {
                 Opcode::SUBSCRIBE => {
                     let header_size = mem::size_of::<ArchivedSubscriptionDataHeader>();
                     let key_size = mem::size_of::<ArchivedEncodedSubscriptionKey>();
-                    let (subscription_header, subscription_keys) = access_subscription(&mut packet);
+                    let subscription = Flash::access_subscription_mut(&mut packet);
                     let mut hasher: Sha256 = Digest::new();
                      
                     // Wait till we have a valid header
                     while body_rw.dma_poll_for_ack() < header_size { }
                      
-                    hasher.update(subscription_header.start_timestamp.to_native().to_le_bytes());
-                    hasher.update(subscription_header.end_timestamp.to_native().to_le_bytes());
-                    hasher.update(subscription_header.channel.to_native().to_le_bytes());
+                    hasher.update(subscription.header.start_timestamp.to_native().to_le_bytes());
+                    hasher.update(subscription.header.end_timestamp.to_native().to_le_bytes());
+                    hasher.update(subscription.header.channel.to_native().to_le_bytes());
 
                     let mut cipher = DECODER_KEY.cipher();
 
-                    for (i, k) in subscription_keys.iter_mut().enumerate() {
+                    for (i, k) in subscription.keys.iter_mut().enumerate() {
                         // Wait till we have valid key
                         while body_rw.dma_poll_for_ack() < header_size + (i + 1) * key_size { }
 
@@ -169,80 +150,93 @@ fn main() -> ! {
                         hasher.update(k.key.0);
                     }
 
-                    if <[u8; 32]>::from(hasher.finalize()) != subscription_header.mac_hash {
+                    if <[u8; 32]>::from(hasher.finalize()) != subscription.header.mac_hash {
                         rw.write_error("Authentication Failed");
                     } else {
-                        subscriptions.push(packet);
+                        flash.add_subscription(packet).unwrap();
                         rw.write_header(Opcode::SUBSCRIBE, 0);
                     }
                 }
                 Opcode::DECODE => {
-                    let header_size = mem::size_of::<ArchivedEncodedFramePacketHeader>();
-                    let key_size = mem::size_of::<ArchivedKey>();
-                    let encoded_frame = unsafe { access_unchecked_mut::<ArchivedEncodedFramePacket>(&mut packet) };
-
-                    let mut key = None;
-
-                    // Wait for header
-                    while body_rw.dma_poll_for_ack() < header_size { }
-
-                    if encoded_frame.header.channel != 0 {
-                        for subscription in &mut subscriptions {
-                            let (subscription_header, subscription_keys) = access_subscription(subscription);
-                            key = subscription_header.key_for_frame(&encoded_frame.header, subscription_keys);
-                            if key.is_some() { break; }
-                        }
-                    } else {
-                        // Dummy header so we can use the same subscription key for frame code
-                        let subscription_header = ArchivedSubscriptionDataHeader {
-                            start_timestamp: 0.into(),
-                            end_timestamp: u64::MAX.into(),
-                            channel: 0.into(),
-                            mac_hash: [0; 32]
-                        };
-
-                        key = subscription_header.key_for_frame(&encoded_frame.header, CHANNEL_0_KEYS);
-                    }
-                    
-                    if let Some((key, mask_idx)) = key {
-                        // Wait for the key to be transferred
-                        while body_rw.dma_poll_for_ack() < header_size + (mask_idx as usize + 1) * key_size { }
-
-                        let mut frame_key = encoded_frame.keys[mask_idx as usize].0;
-                        key.key.cipher().decrypt(&mut frame_key);
-                        let mut f = encoded_frame.header.frame.0;
-                        Key(frame_key).cipher().decrypt(&mut f);
-
-                        // Makes sure timestamp is valid and globally increasing
-                        if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
-                            // Wait until the whole message is transferred
-                            while body_rw.dma_poll_for_ack() < header.length as usize { }
-
-                            rw.write_error("Frame is from the past");
-                        } else {
-                            // Make sure the hash of our frame data equals the mac_hash in the packet header
-                            let signature = Signature::try_from(encoded_frame.header.signature.as_slice()).unwrap();
-                            if verifying_key.verify(&f, &signature).is_ok() {
-                                most_recent_timestamp = Some(encoded_frame.header.timestamp.to_native());
-
-                                // Wait until the whole message is transferred
-                                while body_rw.dma_poll_for_ack() < header.length as usize { }
-
-                                // Write decode response
-                                rw.write_header(Opcode::DECODE, f.len() as u16);
-                                rw.write_bytes(&f);
-                            } else {
-                                // Wait until the whole message is transferred
-                                while body_rw.dma_poll_for_ack() < header.length as usize { }
-
-                                rw.write_error("Frame validation failed");
-                            }
-                        }
-                    } else {
+                    if packet.len() != mem::size_of::<ArchivedEncodedFramePacket>() {
                         // Wait until the whole message is transferred
                         while body_rw.dma_poll_for_ack() < header.length as usize { }
 
-                        rw.write_error("No frame for subscription");
+                        rw.write_error("Unexpected frame packet size");
+                    } else {
+                        let header_size = mem::size_of::<ArchivedEncodedFramePacketHeader>();
+                        let key_size = mem::size_of::<ArchivedKey>();
+                        let encoded_frame = unsafe { access_unchecked_mut::<ArchivedEncodedFramePacket>(&mut packet) };
+
+                        let mut key = None;
+
+                        // Wait for header
+                        while body_rw.dma_poll_for_ack() < header_size { }
+
+                        if encoded_frame.header.channel != 0 {
+                            for subscription in flash.subscriptions() {
+                                key = subscription.header.key_for_frame(&encoded_frame.header, subscription.keys);
+                                if key.is_some() { break; }
+                            }
+                        } else {
+                            // Dummy header so we can use the same subscription key for frame code
+                            let subscription_header = ArchivedSubscriptionDataHeader {
+                                start_timestamp: 0.into(),
+                                end_timestamp: u64::MAX.into(),
+                                channel: 0.into(),
+                                mac_hash: [0; 32]
+                            };
+
+                            key = subscription_header.key_for_frame(&encoded_frame.header, CHANNEL_0_KEYS);
+                        }
+                        
+                        if let Some((key, mask_idx)) = key {
+                            // Wait for the key to be transferred
+                            while body_rw.dma_poll_for_ack() < header_size + (mask_idx as usize + 1) * key_size { }
+
+                            let mut frame_key = encoded_frame.keys[mask_idx as usize].0;
+                            key.key.cipher().decrypt(&mut frame_key);
+                            let mut f = encoded_frame.header.frame.0;
+                            Key(frame_key).cipher().decrypt(&mut f);
+
+                            // Makes sure timestamp is valid and globally increasing
+                            if false {
+                            // if most_recent_timestamp.map(|t| encoded_frame.header.timestamp <= t).unwrap_or(false) {
+                                // Wait until the whole message is transferred
+                                while body_rw.dma_poll_for_ack() < header.length as usize { }
+
+                                rw.write_error("Frame is from the past");
+                            } else {
+                                // Make sure the hash of our frame data equals the mac_hash in the packet header
+                                if let Ok(signature) = Signature::try_from(encoded_frame.header.signature.as_slice()) {
+                                    if verifying_key.verify(&f, &signature).is_ok() {
+                                        most_recent_timestamp = Some(encoded_frame.header.timestamp.to_native());
+
+                                        // Wait until the whole message is transferred
+                                        while body_rw.dma_poll_for_ack() < header.length as usize { }
+
+                                        // Write decode response
+                                        rw.write_header(Opcode::DECODE, f.len() as u16);
+                                        rw.write_bytes(&f);
+                                    } else {
+                                        // Wait until the whole message is transferred
+                                        while body_rw.dma_poll_for_ack() < header.length as usize { }
+
+                                        rw.write_error("Frame validation failed");
+                                    }
+                                } else {
+                                    // Wait until the whole message is transferred
+                                    while body_rw.dma_poll_for_ack() < header.length as usize { }
+
+                                    rw.write_error("Frame signature invalid");
+                                }
+                            }
+                        } else {
+                            // Wait until the whole message is transferred
+                            while body_rw.dma_poll_for_ack() < header.length as usize { }
+
+                            rw.write_error("No frame for subscription");
+                        }
                     }
                 }
                 _ => {

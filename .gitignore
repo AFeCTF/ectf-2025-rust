@@ -23,6 +23,8 @@ tools/build
 
 **/poetry.lock
 
+**/*.secrets
+
 decoder/main/src/keys.rs
 venv/
 test/

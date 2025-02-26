@@ -88,22 +88,22 @@ impl ArchivedSubscriptionData {
 
 impl SubscriptionData {
     /// Generate a subscription key.
-    pub fn generate(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: u32) -> SubscriptionData {
-        let device_key = Key::for_device(device_id, secrets);
+    pub fn generate(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: Option<u32>) -> SubscriptionData {
+        let mut device_key = device_id.map(|d| Key::for_device(d, secrets).cipher());
 
         let mut hasher: Sha256 = Digest::new();
         hasher.update(start.to_le_bytes());
         hasher.update(end.to_le_bytes());
         hasher.update(channel.to_le_bytes());
 
-        let mut device_key_cipher = device_key.cipher();
-
         let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
             let mut key = Key::for_bitrange(t, mask_idx, channel, secrets);
 
             hasher.update(key.0);
 
-            device_key_cipher.encrypt(&mut key.0);
+            if let Some(device_key_cipher) = &mut device_key {
+                device_key_cipher.encrypt(&mut key.0);
+            }
 
             EncodedSubscriptionKey {
                 key 

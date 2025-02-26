@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::frame::{Frame, FRAME_SIZE};
 
-pub const KEY_SIZE_BYTES: usize = 12;
+pub const KEY_SIZE_BYTES: usize = 16;
 
 /// 96-bit key that is extended with zeros to form an AES128 key
 #[derive(Archive, Serialize, Deserialize, Clone)]

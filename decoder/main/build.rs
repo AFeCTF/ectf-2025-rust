@@ -10,7 +10,7 @@
 //!
 //! The build script also sets the linker flags to tell it which link script to use.
 
-use std::{env, fs, io};
+use std::{env, fs};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ use rsa::sha2::Sha256;
 use rsa::signature::Keypair;
 
 const DEFAULT_DECODER_ID: u32 = 0xdeadbeef;
-const SECRETS_PATH: &str = "../../secrets";
+const SECRETS_FILE: &str = "../../global.secrets";
 
 fn main() -> anyhow::Result<()> {
     let decoder_id: u32 = match env::var("DECODER_ID") {
@@ -32,16 +32,11 @@ fn main() -> anyhow::Result<()> {
         Err(_) => { DEFAULT_DECODER_ID },
     };
 
-    let secrets_file = fs::read_dir(SECRETS_PATH)?
-        .filter_map(Result::ok)
-        .find(|e| e.path().is_file())
-        .ok_or(io::Error::new(io::ErrorKind::NotFound, "Secrets file not found"))?;
-
-    let secrets: Vec<u8> = fs::read(secrets_file.path())?;
+    let secrets: Vec<u8> = fs::read(SECRETS_FILE)?;
 
     let decoder_key = Key::for_device(decoder_id, &secrets).0;
 
-    let s = SubscriptionData::generate(&secrets, 0, u64::MAX, 0, decoder_id);
+    let s = SubscriptionData::generate(&secrets, 0, u64::MAX, 0, None);
 
     let keys_code = s.keys.iter().map(|k| {
         let key = k.key.0;
@@ -70,7 +65,7 @@ fn main() -> anyhow::Result<()> {
     fs::write(dest_path, code.to_string()).expect("Failed to write keys.rs");
 
     // If we have new secrets we should rebuild
-    println!("cargo:rerun-if-changed={}", SECRETS_PATH);
+    println!("cargo:rerun-if-changed={}", SECRETS_FILE);
 
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
