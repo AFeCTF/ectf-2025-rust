@@ -28,7 +28,13 @@ const SECRETS_FILE: &str = "../../global.secrets";
 
 fn main() -> anyhow::Result<()> {
     let decoder_id: u32 = match env::var("DECODER_ID") {
-        Ok(s) => { s.parse().unwrap_or(DEFAULT_DECODER_ID) },
+        Ok(s) => { 
+            if s.starts_with("0x") {
+                <u32>::from_str_radix(s.strip_prefix("0x").unwrap(), 16).unwrap_or(DEFAULT_DECODER_ID)
+            } else {
+                s.parse::<u32>().unwrap_or(DEFAULT_DECODER_ID)
+            }     
+        },
         Err(_) => { DEFAULT_DECODER_ID },
     };
 
