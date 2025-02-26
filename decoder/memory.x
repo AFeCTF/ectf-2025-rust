@@ -1,13 +1,14 @@
 /* DEV */
+/*
 MEMORY
 {
   FLASH    : ORIGIN = 0x10000000, LENGTH = 0x46000 
   RESERVED : ORIGIN = 0x10046000, LENGTH = 0x40000
   RAM      : ORIGIN = 0x20000000, LENGTH = 0x20000
 }
+*/
 
 /* RELEASE */
-/*
 MEMORY {
     ROM         (rx) : ORIGIN = 0x00000000, LENGTH = 0x00010000 
     BOOTLOADER  (rx) : ORIGIN = 0x10000000, LENGTH = 0x0000E000
@@ -17,7 +18,6 @@ MEMORY {
     RAM        (rwx) : ORIGIN = 0x20000000, LENGTH = 0x00020000
 }
 _stext = ORIGIN(FLASH) + 0x200;
-*/
 
 SECTIONS {
     .flash_code :
