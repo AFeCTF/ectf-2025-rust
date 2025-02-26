@@ -1,4 +1,4 @@
-use core::{fmt::Debug, mem::MaybeUninit};
+use core::fmt::Debug;
 
 use rkyv::{Archive, Deserialize, Serialize};
 use rsa::{pkcs1::DecodeRsaPrivateKey, pkcs1v15::SigningKey, signature::SignerMut};
@@ -21,7 +21,7 @@ pub struct Frame(pub [u8; FRAME_SIZE]);
 pub struct EncodedFramePacketHeader {
     pub timestamp: u64,
     pub channel: u32,
-    pub signature: [u8; 64],
+    pub signature: [u8; 128],
     pub frame: Frame,
 }
 
@@ -41,8 +41,6 @@ impl Frame {
         let mut encrypted_frame = self.clone();
         frame_key.cipher().encrypt_frame(&mut encrypted_frame);
 
-        // I wish there was an easier way to do this without making Key implement copy, but all
-        // this code does is copy our frame key into an array with size NUM_ENCRYPTED_KEYS.
         let mut data: [Key; NUM_ENCRYPTED_KEYS] = core::array::from_fn(|_| frame_key.clone());
 
         // Loop through every possible mask and encrypt the frame with the key for the bitrange

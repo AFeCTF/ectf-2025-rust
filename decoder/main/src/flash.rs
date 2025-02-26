@@ -5,7 +5,8 @@ use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscription
 use max7800x_hal::flc::{FlashError, Flc, FLASH_PAGE_SIZE};
 use rkyv::util::AlignedVec;
 
-const MAGIC: u32 = 0xDEADBEEE;
+use crate::keys::FLASH_MAGIC;
+
 const START_ADDR: u32 = 0x1006_0000;  // Should be at the start of a page
 const NUM_PAGES: u32 = 4;
 const ALIGNMENT: u32 = 16;
@@ -28,7 +29,7 @@ pub struct Flash {
 
 impl Flash {
     pub fn new(flc: Flc) -> Result<Self, FlashError> {
-        if flc.read_32(START_ADDR)? != MAGIC {
+        if flc.read_32(START_ADDR)? != FLASH_MAGIC {
             // Erase all pages
             let mut addr = START_ADDR;
             for _ in 0..NUM_PAGES {
@@ -37,7 +38,7 @@ impl Flash {
             }
             
             // Write magic to the start address
-            flc.write_32(START_ADDR, MAGIC)?;
+            flc.write_32(START_ADDR, FLASH_MAGIC)?;
         }
 
         let mut subscriptions = Vec::new();

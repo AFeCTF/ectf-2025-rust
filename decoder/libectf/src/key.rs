@@ -103,7 +103,7 @@ impl Cipher {
 
 impl Debug for Key {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Key(b\"")?;
+        write!(f, "Key(x\"")?;
 
         for c in self.0 {
             write!(f, "{:02x}", c)?;

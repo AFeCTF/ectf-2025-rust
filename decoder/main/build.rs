@@ -20,7 +20,7 @@ use libectf::subscription::SubscriptionData;
 use quote::quote;
 use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPublicKey};
 use rsa::pkcs1v15::SigningKey;
-use rsa::sha2::Sha256;
+use rsa::sha2::{Digest, Sha256};
 use rsa::signature::Keypair;
 
 const DEFAULT_DECODER_ID: u32 = 0xdeadbeef;
@@ -33,6 +33,13 @@ fn main() -> anyhow::Result<()> {
     };
 
     let secrets: Vec<u8> = fs::read(SECRETS_FILE)?;
+    
+    // Hash the secrets and take the first 4 bytes as the flash magic so that when we generate new
+    // secrets it'll erase the old subscriptions
+    let mut hasher: Sha256 = Digest::new();
+    hasher.update(&secrets);
+    let secrets_hash: [u8; 32] = hasher.finalize().into();
+    let flash_magic: u32 = u32::from_le_bytes(secrets_hash[..4].try_into().unwrap());
 
     let decoder_key = Key::for_device(decoder_id, &secrets).0;
 
@@ -59,6 +66,7 @@ fn main() -> anyhow::Result<()> {
         pub static DECODER_KEY: Key = Key([#(#decoder_key),*]);
         pub static CHANNEL_0_KEYS: &[ArchivedEncodedSubscriptionKey] = &[#(#keys_code),*];
         pub static VERIFYING_KEY: &[u8] = &[#(#verifying_key_bytes),*];
+        pub static FLASH_MAGIC: u32 = #flash_magic;
     };
 
     let dest_path = Path::new("src/keys.rs");

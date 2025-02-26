@@ -37,7 +37,7 @@ fn gen_subscription(secrets: Vec<u8>, device_id: u32, start: u64, end: u64, chan
 #[pyfunction]
 #[allow(unused_variables)]
 fn gen_secrets(channels: Vec<u32>) -> Vec<u8> {
-    let private_key = RsaPrivateKey::new(&mut OsRng, 512).unwrap();
+    let private_key = RsaPrivateKey::new(&mut OsRng, 1024).unwrap();
     let signing_key = SigningKey::<Sha256>::new(private_key);
     signing_key.to_pkcs1_der().unwrap().as_bytes().to_vec()
 }
