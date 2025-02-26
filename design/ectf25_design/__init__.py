@@ -28,8 +28,8 @@ if spec is None or spec.loader is None:
 
     # Match Python version, platform, and architecture
     valid_wheel = None
-    for dir in ["./wheels", "/design/wheels"]:
-        WHEEL_DIR = os.path.abspath(os.path.join(os.getcwd(), dir))
+    for dir in [os.path.join(os.getcwd(), "./wheels"), "/design/wheels"]:
+        WHEEL_DIR = os.path.abspath(dir)
         whl_candidates = glob.glob(os.path.join(WHEEL_DIR, "ectf25_design_rs-*.whl"))
 
         for whl in whl_candidates:
