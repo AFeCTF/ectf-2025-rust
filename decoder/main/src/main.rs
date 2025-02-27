@@ -143,7 +143,6 @@ fn main() -> ! {
 
             match header.opcode {
                 Opcode::SUBSCRIBE => {
-
                     let header_size = mem::size_of::<ArchivedSubscriptionDataHeader>();
                     let key_size = mem::size_of::<ArchivedEncodedSubscriptionKey>();
                     let subscription = Flash::access_subscription_mut(&mut packet);
@@ -151,32 +150,39 @@ fn main() -> ! {
                      
                     // Wait till we have a valid header
                     while body_rw.dma_poll_for_ack() < header_size { }
-                     
-                    hasher.update(subscription.header.start_timestamp.to_native().to_le_bytes());
-                    hasher.update(subscription.header.end_timestamp.to_native().to_le_bytes());
-                    hasher.update(subscription.header.channel.to_native().to_le_bytes());
 
-                    let mut cipher = DECODER_KEY.cipher();
+                    if subscription.header.channel == 0 {
+                        // Wait until the whole message is transferred
+                        while body_rw.dma_poll_for_ack() < header.length as usize { }
 
-                    for (i, k) in subscription.keys.iter_mut().enumerate() {
-                        // Wait till we have valid key
-                        while body_rw.dma_poll_for_ack() < header_size + (i + 1) * key_size { }
-
-                        // body_rw.rw.write_debug(&format!("{:?}", k));
-                        cipher.decrypt(&mut k.key.0);
-                        hasher.update(k.key.0);
-                    }
-
-                    if <[u8; 32]>::from(hasher.finalize()) != subscription.header.mac_hash {
-                        rw.write_error("Authentication Failed");
+                        rw.write_error("Cannot subscribe to channel 0");
                     } else {
-                        match flash.add_subscription(packet, &mut rw) {
-                            Ok(_) => {
-                                rw.write_header(Opcode::SUBSCRIBE, 0);
-                            },
-                            Err(e) => {
-                                rw.write_error(&format!("Flash Error {:?}", e));
-                            },
+                        hasher.update(subscription.header.start_timestamp.to_native().to_le_bytes());
+                        hasher.update(subscription.header.end_timestamp.to_native().to_le_bytes());
+                        hasher.update(subscription.header.channel.to_native().to_le_bytes());
+
+                        let mut cipher = DECODER_KEY.cipher();
+
+                        for (i, k) in subscription.keys.iter_mut().enumerate() {
+                            // Wait till we have valid key
+                            while body_rw.dma_poll_for_ack() < header_size + (i + 1) * key_size { }
+
+                            // body_rw.rw.write_debug(&format!("{:?}", k));
+                            cipher.decrypt(&mut k.key.0);
+                            hasher.update(k.key.0);
+                        }
+
+                        if <[u8; 32]>::from(hasher.finalize()) != subscription.header.mac_hash {
+                            rw.write_error("Authentication Failed");
+                        } else {
+                            match flash.add_subscription(packet, &mut rw) {
+                                Ok(_) => {
+                                    rw.write_header(Opcode::SUBSCRIBE, 0);
+                                },
+                                Err(e) => {
+                                    rw.write_error(&format!("Flash Error {:?}", e));
+                                },
+                            }
                         }
                     }
                 }
