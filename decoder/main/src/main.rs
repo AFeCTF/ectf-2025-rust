@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+use alloc::format;
 use alloc::vec::Vec;
 use embedded_alloc::LlffHeap as Heap;
 use flash::Flash;
@@ -153,8 +154,14 @@ fn main() -> ! {
                     if <[u8; 32]>::from(hasher.finalize()) != subscription.header.mac_hash {
                         rw.write_error("Authentication Failed");
                     } else {
-                        flash.add_subscription(packet).unwrap();
-                        rw.write_header(Opcode::SUBSCRIBE, 0);
+                        match flash.add_subscription(packet) {
+                            Ok(_) => {
+                                rw.write_header(Opcode::SUBSCRIBE, 0);
+                            },
+                            Err(e) => {
+                                rw.write_error(&format!("Flash Error {:?}", e));
+                            },
+                        }
                     }
                 }
                 Opcode::DECODE => {
