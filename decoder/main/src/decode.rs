@@ -71,7 +71,7 @@ pub fn decode_frame<RW: RawRW>(header: &MessageHeader, mut packet: AlignedVec, v
         .map_err(|e| format!("Signature invalid: {:?}", e))?;
 
     // Verify that the signature matches our decrypted frame
-    if verifying_key.verify(&f, &signature).is_ok() {
+    if verifying_key.verify(&f, &signature).is_err() {
         return Err("Frame validation failed".to_string());
     }
 
