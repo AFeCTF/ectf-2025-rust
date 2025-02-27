@@ -12,5 +12,6 @@ CARGO_TARGET_DIR=target maturin build --release --target universal2-apple-darwin
 # Windows (not working)
 # CARGO_TARGET_DIR=target maturin build --release -i 3.9 --target x86_64-pc-windows-msvc
 
-rm -rf ../design/wheels
-cp -r target/wheels ../design/wheels
+rm -rf ./wheels
+cp -r target/wheels ./wheels
+twine upload ./wheels/*

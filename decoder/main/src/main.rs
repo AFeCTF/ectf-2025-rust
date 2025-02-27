@@ -85,7 +85,14 @@ fn main() -> ! {
         .parity(hal::uart::ParityBit::None)
         .build();
 
-    let mut flash = Flash::new(Flc::new(p.flc, clks.sys_clk)).unwrap();
+    let mut flash = Flash::new(Flc::new(p.flc, clks.sys_clk));
+
+    // Init flash during startup (no debug messages)
+    let mut flash_init = true;
+    flash.init(&mut rw).unwrap();
+
+    // Init flash on first command
+    // let mut flash_init = false;
 
     let mut most_recent_timestamp: Option<u64> = None;
 
@@ -96,6 +103,14 @@ fn main() -> ! {
 
         if header.opcode.should_ack() {
             rw.write_ack();
+        }
+
+        if !flash_init { 
+            match flash.init(&mut rw) {
+                Ok(_) => {},
+                Err(e) => { rw.write_error(&format!("Flash Error: {:?}", e)); },
+            }
+            flash_init = true;
         }
 
         if header.length == 0 {
@@ -128,6 +143,7 @@ fn main() -> ! {
 
             match header.opcode {
                 Opcode::SUBSCRIBE => {
+
                     let header_size = mem::size_of::<ArchivedSubscriptionDataHeader>();
                     let key_size = mem::size_of::<ArchivedEncodedSubscriptionKey>();
                     let subscription = Flash::access_subscription_mut(&mut packet);
@@ -154,7 +170,7 @@ fn main() -> ! {
                     if <[u8; 32]>::from(hasher.finalize()) != subscription.header.mac_hash {
                         rw.write_error("Authentication Failed");
                     } else {
-                        match flash.add_subscription(packet) {
+                        match flash.add_subscription(packet, &mut rw) {
                             Ok(_) => {
                                 rw.write_header(Opcode::SUBSCRIBE, 0);
                             },

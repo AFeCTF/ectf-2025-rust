@@ -5,7 +5,7 @@ use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscription
 use max7800x_hal::flc::{FlashError, Flc, FLASH_PAGE_SIZE};
 use rkyv::util::AlignedVec;
 
-use crate::keys::FLASH_MAGIC;
+use crate::{keys::FLASH_MAGIC, uart::raw_rw::RawRW};
 
 const START_ADDR: u32 = 0x1006_0000;  // Should be at the start of a page
 const NUM_PAGES: u32 = 4;
@@ -28,20 +28,29 @@ pub struct Flash {
 }
 
 impl Flash {
-    pub fn new(flc: Flc) -> Result<Self, FlashError> {
-        if flc.read_32(START_ADDR)? != FLASH_MAGIC {
+    pub fn new(flc: Flc) -> Self {
+        Self {
+            flc,
+            subscriptions: Vec::new(),
+            next_entry_addr: 0
+        }
+    }
+
+    #[allow(unused_variables)]
+    pub fn init(&mut self, rw: &mut impl RawRW) -> Result<(), FlashError> {
+        if self.flc.read_32(START_ADDR)? != FLASH_MAGIC {
             // Erase all pages
             let mut addr = START_ADDR;
             for _ in 0..NUM_PAGES {
-                unsafe { flc.erase_page(addr)?; }
+                unsafe { self.flc.erase_page(addr)?; }
                 addr += FLASH_PAGE_SIZE;
             }
             
             // Write magic to the start address
-            flc.write_32(START_ADDR, FLASH_MAGIC)?;
+            self.flc.write_32(START_ADDR, FLASH_MAGIC)?;
         }
 
-        let mut subscriptions = Vec::new();
+        self.subscriptions = Vec::new();
 
         let mut addr = START_ADDR + 4;
 
@@ -51,31 +60,34 @@ impl Flash {
 
             Self::check_addr(addr)?;
 
-            let len = flc.read_32(addr)?;
+            // rw.write_debug(&format!("Checking for len at {:#x}", addr));
+
+            let len = self.flc.read_32(addr)?;
             
             // If the length specifier is blank (all 1s) we are done
             if len == 0xFFFFFFFF { break }
 
             addr += 4;
+            // rw.write_debug(&format!("len={}, start={:#x}", len, addr));
             Self::check_addr(addr + len)?;
-            subscriptions.push(Self::access_subscription(addr, len));
+            self.subscriptions.push(Self::access_subscription(addr, len));
 
             addr += len;
         }
 
-        Ok(Self {
-            flc,
-            subscriptions,
-            next_entry_addr: Self::addr_before_aligned(addr)
-        })
+        self.next_entry_addr = Self::addr_before_aligned(addr);
+
+        Ok(())
     }
 
     pub fn subscriptions(&self) -> &Vec<StaticSubscription> {
         &self.subscriptions
     }
 
-    pub fn add_subscription(&mut self, data: AlignedVec) -> Result<(), FlashError> {
+    #[allow(unused_variables)]
+    pub fn add_subscription(&mut self, data: AlignedVec, rw: &mut impl RawRW) -> Result<(), FlashError> {
         Self::check_addr(self.next_entry_addr + 4 + data.len() as u32)?;
+        // rw.write_debug(&format!("Writing len={} to {:#x}", data.len(), self.next_entry_addr));
         self.flc.write_32(self.next_entry_addr, data.len() as u32)?;
 
         self.next_entry_addr += 4;
@@ -87,10 +99,11 @@ impl Flash {
             buf[..chunk.len()].copy_from_slice(chunk);
             let buf = unsafe { &*(buf.as_ptr() as *const [u32; 4]) };
             self.flc.write_128(self.next_entry_addr, &buf)?;
-            self.next_entry_addr += 16;
+            self.next_entry_addr += chunk.len() as u32;
         }
 
         self.next_entry_addr = Self::addr_before_aligned(self.next_entry_addr);
+        // rw.write_debug(&format!("Next subscription will be at {:#x}", self.next_entry_addr));
 
         self.subscriptions.push(Self::access_subscription(entry_addr, data.len() as u32));
 
@@ -99,7 +112,7 @@ impl Flash {
 
     #[inline]
     const fn addr_before_aligned(current: u32) -> u32 {
-        (current & !(ALIGNMENT - 1)) + ALIGNMENT - 4
+        ((current + 3) & !(ALIGNMENT - 1)) + ALIGNMENT - 4
     }
 
     /// This MUST be called on a RAM address and not flash
