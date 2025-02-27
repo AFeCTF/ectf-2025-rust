@@ -1,8 +1,6 @@
 use max7800x_hal::pac::dma;
 use rkyv::util::AlignedVec;
 
-use crate::UART0;
-
 use super::raw_rw::RawRW;
 
 const ALIGNMENT: usize = 16;
@@ -12,7 +10,7 @@ const ALIGNMENT: usize = 16;
 pub struct BodyRW<'l, RW: RawRW> {
     pub rw: &'l mut RW,
     should_ack: bool,
-    dma: Option<&'l dma::Ch>,
+    dma: &'l dma::Ch,
     cursor: usize,
     last_ack_write: usize,
     dma_read_length: usize,
@@ -22,7 +20,7 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
     const CHUNK_SIZE: usize = 256;
     
     /// Creates a new BodyRW object.
-    pub fn new(should_ack: bool, rw: &'l mut RW, dma: Option<&'l dma::Ch>) -> Self {
+    pub fn new(should_ack: bool, rw: &'l mut RW, dma: &'l dma::Ch) -> Self {
         Self { rw, should_ack, dma, cursor: 0, dma_read_length: 0, last_ack_write: 0 }
     }
     
@@ -33,24 +31,20 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         self.dma_read_length = length;
         self.last_ack_write = 0;
 
-        #[allow(static_mut_refs)]
-        let uart0 = unsafe { UART0.as_mut().unwrap() };
-        let dma = self.dma.unwrap();
-
         // 1. Ensure DMA_CHn_CTRL.en, DMA_CHn_CTRL.rlden = 0, and DMA_CHn_STATUS.ctz_if = 0.
-        dma.ctrl().modify(|_, w| w.en().clear_bit().rlden().clear_bit());
-        dma.status().write(|w| w.ctz_if().clear_bit_by_one());
+        self.dma.ctrl().modify(|_, w| w.en().clear_bit().rlden().clear_bit());
+        self.dma.status().write(|w| w.ctz_if().clear_bit_by_one());
 
         // 2. If using memory for the destination of the DMA transfer, configure DMA_CHn_DST to the starting 
         // address of the destination in memory.
-        dma.dst().write(|w| unsafe { w.bits(res.as_ptr() as u32) } );
+        self.dma.dst().write(|w| unsafe { w.bits(res.as_ptr() as u32) } );
 
         // 4. Write the number of bytes to transfer to the DMA_CHn_CNT register.
-        dma.cnt().write(|w| unsafe { w.bits(length as u32) });
+        self.dma.cnt().write(|w| unsafe { w.bits(length as u32) });
 
         // 5. Configure the following DMA_CHn_CTRL register fields in one or more instructions. Do not set DMA_CHn_CTRL.en
         // to 1 or DMA_CHn_CTRL.rlden to 1 in this step:
-        dma.ctrl().modify(|_, w| unsafe { w
+        self.dma.ctrl().modify(|_, w| unsafe { w
             // 5a. Configure DMA_CHn_CTRL.request to select the transfer operation associated with the DMA channel.
             .request().uart0rx()
             
@@ -91,19 +85,13 @@ impl<'l, RW: RawRW> BodyRW<'l, RW> {
         });
 
         // 7. Set DMA_CHn_CTRL.en = 1 to start the DMA transfer immediately.
-        dma.ctrl().modify(|_, w| w.en().set_bit());
+        self.dma.ctrl().modify(|_, w| w.en().set_bit());
 
-        // Enable DMA from the UART side
-        uart0.dma().modify(|_, w| unsafe { w
-            .rx_en().set_bit()
-            .rx_thd_val().bits(1)  // TODO is this right?
-        });
-        
         res
     }
     
     pub fn dma_poll_for_ack(&mut self) -> usize {
-        let bytes_read = self.dma_read_length - self.dma.unwrap().cnt().read().bits() as usize;
+        let bytes_read = self.dma_read_length - self.dma.cnt().read().bits() as usize;
         if (bytes_read % Self::CHUNK_SIZE == 0 || bytes_read == self.dma_read_length) && bytes_read != self.last_ack_write {
             self.last_ack_write = bytes_read;
             self.rw.write_ack();

@@ -92,26 +92,3 @@ pub trait RawRW: Sized + embedded_io::Read + embedded_io::Write {
         }
     }
 }
-
-// #[allow(static_mut_refs)]
-// #[allow(non_snake_case)]
-// #[interrupt]
-// unsafe fn UART0() {
-//     let uart0 = UART0.as_mut().unwrap();
-
-//     if uart0.int_fl().read().rx_ov().bit_is_set() {
-//         panic!("rx buffer overrun");
-//     }
-
-//     // Read all bytes off wire
-//     let rw = RW.as_mut().unwrap();
-//     while rw.inner.read_ready().unwrap() {
-//         rw.rxbuf.push(rw.inner.read_byte());
-//     }
-
-//     // Clear the interrupt flags
-//     uart0.int_fl().write(|w| w
-//         .rx_thd().set_bit()
-//         // .rx_ov().set_bit()
-//     );
-// }

@@ -11,16 +11,19 @@ const START_ADDR: u32 = 0x1006_0000;  // Should be at the start of a page
 const NUM_PAGES: u32 = 4;
 const ALIGNMENT: u32 = 16;
 
+/// Static reference to a subscription stored in flash
 pub struct StaticSubscription {
     pub header: &'static ArchivedSubscriptionDataHeader,
     pub keys: &'static [ArchivedEncodedSubscriptionKey]
 }
 
+/// Mutable reference to a subscription stored in RAM
 pub struct MutSubscription {
     pub header: &'static ArchivedSubscriptionDataHeader,
     pub keys: &'static mut [ArchivedEncodedSubscriptionKey]
 }
 
+/// Flash storage for subscriptions
 pub struct Flash {
     flc: Flc,
     subscriptions: Vec<StaticSubscription>,
@@ -28,6 +31,7 @@ pub struct Flash {
 }
 
 impl Flash {
+    /// Creates a new (uninitialized) flash
     pub fn new(flc: Flc) -> Self {
         Self {
             flc,
@@ -36,8 +40,10 @@ impl Flash {
         }
     }
 
+    // Initialize the flash and fetch all current subscriptions
     #[allow(unused_variables)]
     pub fn init(&mut self, rw: &mut impl RawRW) -> Result<(), FlashError> {
+        // Check if the flash has valid data in it, otherwise erase
         if self.flc.read_32(START_ADDR)? != FLASH_MAGIC {
             // Erase all pages
             let mut addr = START_ADDR;
@@ -52,6 +58,7 @@ impl Flash {
 
         self.subscriptions = Vec::new();
 
+        // First possible subscription address (if it's aligned)
         let mut addr = START_ADDR + 4;
 
         loop {
@@ -62,28 +69,36 @@ impl Flash {
 
             // rw.write_debug(&format!("Checking for len at {:#x}", addr));
 
+            // Read the length of the subscription packet
             let len = self.flc.read_32(addr)?;
             
             // If the length specifier is blank (all 1s) we are done
             if len == 0xFFFFFFFF { break }
 
+            // Actual packet is after length u32
             addr += 4;
             // rw.write_debug(&format!("len={}, start={:#x}", len, addr));
             Self::check_addr(addr + len)?;
+
+            // Add this subscription to the subscriptions list
             self.subscriptions.push(Self::access_subscription(addr, len));
 
+            // Increment addr so we can continue our search
             addr += len;
         }
 
+        // Address that the next subscription will be stored
         self.next_entry_addr = Self::addr_before_aligned(addr);
 
         Ok(())
     }
 
+    /// Immutable reference to the subscriptions list
     pub fn subscriptions(&self) -> &Vec<StaticSubscription> {
         &self.subscriptions
     }
 
+    /// Add a subscription to the flash memory and the subscriptions vec
     #[allow(unused_variables)]
     pub fn add_subscription(&mut self, data: AlignedVec, rw: &mut impl RawRW) -> Result<(), FlashError> {
         Self::check_addr(self.next_entry_addr + 4 + data.len() as u32)?;
@@ -110,6 +125,8 @@ impl Flash {
         Ok(())
     }
 
+    /// Address of the next u32 before an aligned chunk of memory (where a subscription's packet
+    /// length will be stored)
     #[inline]
     const fn addr_before_aligned(current: u32) -> u32 {
         ((current + 3) & !(ALIGNMENT - 1)) + ALIGNMENT - 4
@@ -141,6 +158,7 @@ impl Flash {
         }
     }
 
+    /// Access a subscription that has been stored into flash
     fn access_subscription(addr: u32, len: u32) -> StaticSubscription {
         // Split the header off of the packet
         let header_size = mem::size_of::<ArchivedSubscriptionDataHeader>();
@@ -163,6 +181,7 @@ impl Flash {
         }
     }
 
+    /// Make sure an address is within our flash storage area
     fn check_addr(addr: u32) -> Result<(), FlashError> {
         if addr > START_ADDR + NUM_PAGES * FLASH_PAGE_SIZE {
             Err(FlashError::InvalidAddress)

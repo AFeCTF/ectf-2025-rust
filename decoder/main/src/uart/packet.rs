@@ -4,7 +4,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 pub const MAGIC: u8 = b'%';
 
 /// The opcode indicating the type of packet being sent
-#[derive(Serialize, Deserialize, Archive, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Archive, PartialEq, Eq, Debug)]
 pub struct Opcode(pub u8);
 
 impl Opcode {
@@ -21,7 +21,7 @@ impl Opcode {
     }
 }
 
-#[derive(Serialize, Deserialize, Archive)]
+#[derive(Serialize, Deserialize, Archive, Debug)]
 pub struct MessageHeader {
     pub magic: u8,
     pub opcode: Opcode,
