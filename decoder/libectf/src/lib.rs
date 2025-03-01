@@ -1,9 +1,9 @@
 #![feature(inherent_str_constructors)]
 
-#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 
-#[cfg(test)] extern crate std;
-#[cfg(test)] #[allow(unused_imports)] use std::prelude::*;
+#[cfg(any(test, feature = "std"))] extern crate std;
+#[cfg(any(test, feature = "std"))] #[allow(unused_imports)] use std::prelude::*;
 
 extern crate alloc;
 pub mod masks;

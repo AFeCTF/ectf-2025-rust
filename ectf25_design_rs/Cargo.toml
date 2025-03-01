@@ -1,6 +1,6 @@
 [package]
 name = "ectf25_design_rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [lib]
@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.23.3"
-libectf = { path = "../decoder/libectf" }
+libectf = { path = "../decoder/libectf", features = ["std"] }
 rkyv = { version = "0.8.10", features = ["alloc", "little_endian"], default-features = false }
 rsa = { version = "0.9.7", features = ["sha2"], default-features = false }
 rand = "0.8.0"
