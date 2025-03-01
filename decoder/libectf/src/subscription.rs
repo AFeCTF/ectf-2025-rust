@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use hmac::{Hmac, Mac};
 use rkyv::{Archive, Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::{frame::ArchivedEncodedFramePacketHeader, key::Key, masks::{characterize_range, MASKS}};
 
@@ -64,29 +64,6 @@ impl ArchivedSubscriptionDataHeader {
     }
 }
 
-impl ArchivedSubscriptionData {
-    /// Decrypt the subscription keys using the device_key and validate that the mac_hash matches
-    /// the hash of our decrypted data.
-    pub fn authenticate(&self, device_key: &Key) -> bool {
-        let mut hasher: Sha256 = Digest::new();
-        hasher.update(self.header.start_timestamp.to_native().to_le_bytes());
-        hasher.update(self.header.end_timestamp.to_native().to_le_bytes());
-        hasher.update(self.header.channel.to_native().to_le_bytes());
-
-        let mut cipher = device_key.cipher();
-
-        let mut buf = [0u8; 8];
-        
-        for (k, _) in self.keys.iter().zip(characterize_range(self.header.start_timestamp.to_native(), self.header.end_timestamp.to_native()).into_iter()) {
-            buf.copy_from_slice(&k.key.0);
-            cipher.decrypt(&mut buf);
-            hasher.update(k.key.0);
-        }
-
-        <[u8; 32]>::from(hasher.finalize()) == self.header.mac_hash
-    }
-}
-
 impl SubscriptionData {
     /// Generate a subscription key.
     pub fn generate(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: Option<u32>) -> SubscriptionData {
@@ -104,8 +81,8 @@ impl SubscriptionData {
             let mut key = Key::for_bitrange(t, mask_idx, channel, secrets);
 
             if let Some((device_key_cipher, hasher)) = &mut key_and_hasher {
-                device_key_cipher.encrypt(&mut key.0);
                 hasher.update(&key.0);
+                device_key_cipher.encrypt(&mut key.0);
             }
 
             EncodedSubscriptionKey {
