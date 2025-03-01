@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use hmac::{Hmac, Mac};
 use rkyv::{Archive, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -89,20 +90,22 @@ impl ArchivedSubscriptionData {
 impl SubscriptionData {
     /// Generate a subscription key.
     pub fn generate(secrets: &[u8], start: u64, end: u64, channel: u32, device_id: Option<u32>) -> SubscriptionData {
-        let mut device_key = device_id.map(|d| Key::for_device(d, secrets).cipher());
+        let mut key_and_hasher = device_id.map(|d| {
+            let k = Key::for_device(d, secrets);
+            let mut hasher = <Hmac::<Sha256> as Mac>::new_from_slice(&k.0).unwrap();
+            hasher.update(&start.to_le_bytes());
+            hasher.update(&end.to_le_bytes());
+            hasher.update(&channel.to_le_bytes());
 
-        let mut hasher: Sha256 = Digest::new();
-        hasher.update(start.to_le_bytes());
-        hasher.update(end.to_le_bytes());
-        hasher.update(channel.to_le_bytes());
+            (k.cipher(), hasher)
+        });
 
         let keys = characterize_range(start, end).into_iter().map(|(t, mask_idx)| {
             let mut key = Key::for_bitrange(t, mask_idx, channel, secrets);
 
-            hasher.update(key.0);
-
-            if let Some(device_key_cipher) = &mut device_key {
+            if let Some((device_key_cipher, hasher)) = &mut key_and_hasher {
                 device_key_cipher.encrypt(&mut key.0);
+                hasher.update(&key.0);
             }
 
             EncodedSubscriptionKey {
@@ -114,7 +117,7 @@ impl SubscriptionData {
             channel,
             start_timestamp: start,
             end_timestamp: end,
-            mac_hash: hasher.finalize().into()
+            mac_hash: key_and_hasher.map(|(_, hasher)| hasher.finalize().into_bytes().into()).unwrap_or([0; 32])
         };
 
         SubscriptionData { header, keys }

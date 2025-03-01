@@ -2,8 +2,9 @@ use core::fmt::Debug;
 
 use aes::Aes128;
 use cipher::{generic_array::GenericArray, BlockDecryptMut, BlockEncryptMut, KeyInit, KeySizeUser};
+use hmac::{Hmac, Mac};
 use rkyv::{Archive, Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::frame::{Frame, FRAME_SIZE};
 
@@ -46,31 +47,28 @@ impl Key {
 
     /// Generate a device key using the device id and the global secrets.
     pub fn for_device(device_id: u32, secrets: &[u8]) -> Key {
-        let mut hasher: Sha256 = Digest::new();
-        hasher.update(secrets);
-        hasher.update(device_id.to_le_bytes());
-        let hash: [u8; 32] = hasher.finalize().into();
+        let mut hasher = <Hmac::<Sha256> as Mac>::new_from_slice(secrets).unwrap();
+        hasher.update(&device_id.to_le_bytes());
+        let hash: [u8; 32] = hasher.finalize().into_bytes().into();
         Key(hash[..KEY_SIZE_BYTES].try_into().unwrap())
     }
 
     /// Generate a subscripton key for a bitrange.
     pub fn for_bitrange(start_timestamp: u64, mask_idx: u8, channel: u32, secrets: &[u8]) -> Key {
-        let mut hasher: Sha256 = Digest::new();
-        hasher.update(secrets);
-        hasher.update(start_timestamp.to_le_bytes());
-        hasher.update(mask_idx.to_le_bytes());
-        hasher.update(channel.to_le_bytes());
-        let hash: [u8; 32] = hasher.finalize().into();
+        let mut hasher = <Hmac::<Sha256> as Mac>::new_from_slice(secrets).unwrap();
+        hasher.update(&start_timestamp.to_le_bytes());
+        hasher.update(&mask_idx.to_le_bytes());
+        hasher.update(&channel.to_le_bytes());
+        let hash: [u8; 32] = hasher.finalize().into_bytes().into();
         Key(hash[..KEY_SIZE_BYTES].try_into().unwrap())
     }
 
     /// Generate a subscripton key for a bitrange.
     pub fn for_frame(timestamp: u64, channel: u32, secrets: &[u8]) -> Key {
-        let mut hasher: Sha256 = Digest::new();
-        hasher.update(secrets);
-        hasher.update(timestamp.to_le_bytes());
-        hasher.update(channel.to_le_bytes());
-        let hash: [u8; 32] = hasher.finalize().into();
+        let mut hasher = <Hmac::<Sha256> as Mac>::new_from_slice(secrets).unwrap();
+        hasher.update(&timestamp.to_le_bytes());
+        hasher.update(&channel.to_le_bytes());
+        let hash: [u8; 32] = hasher.finalize().into_bytes().into();
         Key(hash[..KEY_SIZE_BYTES].try_into().unwrap())
     }
 }

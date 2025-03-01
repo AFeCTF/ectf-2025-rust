@@ -3,7 +3,8 @@ use core::mem;
 use alloc::{format, string::{String, ToString}};
 use libectf::subscription::{ArchivedEncodedSubscriptionKey, ArchivedSubscriptionDataHeader};
 use rkyv::util::AlignedVec;
-use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 use crate::{flash::Flash, keys::DECODER_KEY, uart::{body_rw::BodyRW, packet::Opcode, raw_rw::RawRW}};
 
@@ -15,7 +16,7 @@ pub fn add_subscription<RW: RawRW>(mut packet: AlignedVec, body_rw: &mut BodyRW<
     let subscription = Flash::access_subscription_mut(&mut packet);
 
     // Initialize hasher to verify MAC
-    let mut hasher: Sha256 = Digest::new();
+    let mut hasher = <Hmac::<Sha256> as Mac>::new_from_slice(&DECODER_KEY.0).unwrap();
      
     // Wait until header has been transferred by DMA
     while body_rw.dma_poll_for_ack() < header_size { }
@@ -26,9 +27,9 @@ pub fn add_subscription<RW: RawRW>(mut packet: AlignedVec, body_rw: &mut BodyRW<
     } 
 
     // Hash the header components
-    hasher.update(subscription.header.start_timestamp.to_native().to_le_bytes());
-    hasher.update(subscription.header.end_timestamp.to_native().to_le_bytes());
-    hasher.update(subscription.header.channel.to_native().to_le_bytes());
+    hasher.update(&subscription.header.start_timestamp.to_native().to_le_bytes());
+    hasher.update(&subscription.header.end_timestamp.to_native().to_le_bytes());
+    hasher.update(&subscription.header.channel.to_native().to_le_bytes());
 
     // All subscription keys are encrypted with the decoder key
     let mut cipher = DECODER_KEY.cipher();
@@ -39,11 +40,11 @@ pub fn add_subscription<RW: RawRW>(mut packet: AlignedVec, body_rw: &mut BodyRW<
 
         // Decrypt the key in-place and then update the hasher with the decrypted key
         cipher.decrypt(&mut k.key.0);
-        hasher.update(k.key.0);
+        hasher.update(&k.key.0);
     }
 
     // Ensure that the MAC matches what we got from the hasher
-    if <[u8; 32]>::from(hasher.finalize()) != subscription.header.mac_hash {
+    if <[u8; 32]>::from(hasher.finalize().into_bytes()) != subscription.header.mac_hash {
         return Err("Authentication Failed".to_string());
     } 
 
